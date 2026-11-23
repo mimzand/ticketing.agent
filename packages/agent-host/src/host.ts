@@ -9,6 +9,7 @@ import {
   acceptQuote,
   aliasKey,
   CreateDepartmentSchema,
+  MergeSendersSchema,
   DEPARTMENT_IN_USE_MESSAGE,
   SettingsPatchSchema,
   type ClassifyTicket,
@@ -16,6 +17,9 @@ import {
   type ConnectionTestResult,
   type CreateDepartmentInput,
   type TaxonomyState,
+  type MergeSenders,
+  type MergeSendersResult,
+  type TicketContext,
   type Decision,
   type DeleteDepartment,
   type DeleteDepartmentResult,
@@ -77,6 +81,10 @@ export interface AgentHost {
   createDepartment(input: CreateDepartmentInput): Department;
   /** The current taxonomy version and its history. Read only. */
   taxonomy(): TaxonomyState;
+  /** A ticket's sender and that sender's earlier decided tickets (the classifier's data block). */
+  ticketContext(input: { readonly id: string }): TicketContext;
+  /** Operator merge of two senders. Tickets move; decisions stay as they are. */
+  mergeSenders(input: MergeSenders): MergeSendersResult;
   updateDepartment(input: UpdateDepartment): Department;
   deleteDepartment(input: DeleteDepartment): DeleteDepartmentResult;
   /**
@@ -152,6 +160,20 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       return db.insertDepartment(input);
     },
     taxonomy: () => db.taxonomy(),
+    ticketContext(input) {
+      const ticket = db.getById(input.id);
+      if (!ticket) throw new HostError('No such ticket.', 'not_found');
+      if (ticket.email === null) return { email: null, prior: [] };
+      return { email: ticket.email, prior: db.priorTickets(ticket.email, { id: ticket.id, createdAt: ticket.createdAt }) };
+    },
+    mergeSenders(input) {
+      const parsed = MergeSendersSchema.safeParse(input);
+      if (!parsed.success) throw new HostError(parsed.error.issues[0]?.message ?? 'Invalid merge.');
+      const merged = db.mergeSenders(parsed.data.from, parsed.data.into);
+      // Fixed text: the address itself is not echoed into errors or logs.
+      if (!merged) throw new HostError('No tickets are linked to the address to merge from.', 'not_found');
+      return merged;
+    },
     updateDepartment(input) {
       assertAliasesFree(db, input.id, input.aliases);
       const updated = db.updateDepartment(input);
@@ -276,11 +298,21 @@ async function classifyOnce(
   input: ClassifyTicket,
   signal?: AbortSignal,
 ): Promise<TicketView> {
-  // A stored decision is returned as is: no second model call.
+  // A stored decision is returned as is: no second model call. A repeat that brings
+  // an email for a ticket stored without one only attaches the email.
   const stored = db.findByExternalId(input.externalId);
-  if (stored) return stored;
+  if (stored) {
+    if (input.email && stored.email === null && db.attachEmail(stored.id, input.email)) {
+      return db.getById(stored.id) ?? stored;
+    }
+    return stored;
+  }
   // Cancelled while waiting in the queue.
   if (signal?.aborted) throw cancelled();
+
+  // Sender memory: only the email field identifies a person; no email, no memory.
+  // Read before the new row exists, so the new ticket is never its own history.
+  const history = input.email ? db.priorTickets(input.email) : [];
 
   // Reuses a row left without a decision by a crash or a cancel.
   const created = db.insertTicket(input);
@@ -294,6 +326,7 @@ async function classifyOnce(
       ollama,
       departments: active,
       ticket: input,
+      history,
       ...(signal && { signal }),
     });
     // Only an exact active id counts; an alias or a name is not an id.

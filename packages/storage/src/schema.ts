@@ -11,6 +11,16 @@ export const departments = sqliteTable('departments', {
   examples: text('examples').notNull().default('[]'),
 });
 
+/**
+ * A sender is one normalized email address (trimmed, lowercased). Nothing else
+ * identifies a person: not the channel, not the ticket text, not the model.
+ */
+export const senders = sqliteTable('senders', {
+  id: text('id').primaryKey(),
+  email: text('email').notNull().unique(),
+  createdAt: text('created_at').notNull(),
+});
+
 export const tickets = sqliteTable('tickets', {
   id: text('id').primaryKey(),
   externalId: text('external_id').notNull().unique(),
@@ -18,6 +28,8 @@ export const tickets = sqliteTable('tickets', {
   body: text('body').notNull(),
   channel: text('channel').notNull(),
   createdAt: text('created_at').notNull(),
+  /** The sender, or null for an unknown sender (no email). */
+  senderId: text('sender_id').references(() => senders.id),
 });
 
 export const decisions = sqliteTable('decisions', {

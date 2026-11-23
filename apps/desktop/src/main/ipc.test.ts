@@ -46,6 +46,7 @@ const ticket = {
   body: 'Body',
   channel: 'email',
   createdAt: '2026-01-01T00:00:00.000Z',
+  email: 'ann@example.com',
   decision: { departmentId: 'billing', confidence: 0.9, rationale: 'Invoice.', status: 'labeled', quote: null, taxonomyVersion: 1 },
 };
 const department = { id: 'billing', name: 'Billing', description: '', active: true, aliases: [], examples: [] };
@@ -59,6 +60,8 @@ function fakeAgent() {
     'departments.create': () => department,
     'departments.update': () => department,
     'departments.delete': () => ({ id: 'billing', deleted: true }),
+    'tickets.context': () => ({ email: 'ann@example.com', prior: [] }),
+    'senders.merge': () => ({ email: 'ann@example.com', movedTickets: 1 }),
     'departments.taxonomy': () => ({ current: 1, history: [{ version: 1, createdAt: '2026-01-01T00:00:00.000Z', departmentCount: 1 }] }),
     'tickets.classify': () => ticket,
     'tickets.list': () => [ticket],
@@ -93,6 +96,8 @@ const INPUTS: Record<string, unknown> = {
   [IpcChannels.classifyTicket]: { externalId: 'ext-1', subject: 'Invoice', body: 'Body', channel: 'email' },
   [IpcChannels.overrideTicket]: { id: TICKET_ID, departmentId: 'billing' },
   [IpcChannels.cancelClassify]: { externalId: 'ext-1' },
+  [IpcChannels.ticketContext]: TICKET_ID,
+  [IpcChannels.mergeSender]: { from: 'ann.old@example.com', into: 'ann@example.com' },
   [IpcChannels.updateSettings]: { minConfidence: 0.8 },
   [IpcChannels.testConnection]: { baseUrl: 'https://ollama.example.com' },
   [IpcChannels.saveOllamaToken]: TOKEN,

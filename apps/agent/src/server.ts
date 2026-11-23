@@ -13,6 +13,9 @@ import {
   type SettingsView,
   type StorageInfo,
   type TaxonomyState,
+  type MergeSenders,
+  type MergeSendersResult,
+  type TicketContext,
   type TicketView,
   type TokenState,
   type UpdateDepartment,
@@ -54,6 +57,8 @@ export interface AgentCalls {
   listDepartments(): readonly Department[] | Promise<readonly Department[]>;
   createDepartment(input: CreateDepartment): Department | Promise<Department>;
   taxonomy(): TaxonomyState | Promise<TaxonomyState>;
+  ticketContext(input: { readonly id: string }): TicketContext | Promise<TicketContext>;
+  mergeSenders(input: MergeSenders): MergeSendersResult | Promise<MergeSendersResult>;
   updateDepartment(input: UpdateDepartment): Department | Promise<Department>;
   deleteDepartment(input: DeleteDepartment): DeleteDepartmentResult | Promise<DeleteDepartmentResult>;
   /** `signal` aborts when the client cancels the request or disconnects. */
@@ -276,6 +281,10 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
             return reply(request.id, request.method, await requireCalls().override(request.params));
           case 'departments.update':
             return reply(request.id, request.method, await requireCalls().updateDepartment(request.params));
+          case 'tickets.context':
+            return reply(request.id, request.method, await requireCalls().ticketContext(request.params));
+          case 'senders.merge':
+            return reply(request.id, request.method, await requireCalls().mergeSenders(request.params));
           case 'departments.taxonomy':
             return reply(request.id, request.method, await requireCalls().taxonomy());
           case 'departments.delete':

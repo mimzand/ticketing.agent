@@ -108,11 +108,30 @@ export type DeleteDepartmentResult = z.infer<typeof DeleteDepartmentResultSchema
 export const DEPARTMENT_IN_USE_MESSAGE =
   'This department cannot be removed: a ticket decision references its id, and decisions are never rewritten. Deactivate it instead.';
 
+/**
+ * A sender's identity: exactly one email address, trimmed and lowercased so the same
+ * address always names the same person (on any channel). Lists, display names
+ * (`Name <a@b>`), and anything else are rejected. The address is never taken from
+ * the subject or the body.
+ */
+export const SenderEmailSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .max(254, 'An email address is at most 254 characters.')
+  .pipe(z.email('Enter one email address, like name@example.com.'));
+export type SenderEmail = z.infer<typeof SenderEmailSchema>;
+
+/** How the agent compares addresses (the same rule as SenderEmailSchema). */
+export const normalizeEmail = (email: string): string => email.trim().toLowerCase();
+
 export const ClassifyTicketSchema = z.strictObject({
   externalId: z.string().trim().min(1).max(200),
   subject: z.string().trim().min(1).max(300),
   body: z.string().max(20_000),
   channel: z.string().trim().min(1).max(64),
+  /** Optional. Without it the sender is unknown and there is no sender memory. */
+  email: SenderEmailSchema.optional(),
 });
 export type ClassifyTicket = z.infer<typeof ClassifyTicketSchema>;
 
@@ -148,9 +167,51 @@ export const TicketViewSchema = z.strictObject({
   body: z.string().max(20_000),
   channel: z.string().min(1).max(64),
   createdAt: z.iso.datetime(),
+  /** The sender's normalized email, or null for an unknown sender. */
+  email: SenderEmailSchema.nullable(),
   decision: DecisionSchema,
 });
 export type TicketView = z.infer<typeof TicketViewSchema>;
+
+/** At most this many earlier decided tickets of the same sender reach the classifier. */
+export const SENDER_HISTORY_LIMIT = 5;
+
+/**
+ * One earlier ticket of the same sender, as the classifier sees it: no body, no
+ * rationale. Untrusted data: it cannot change the departments or the host rules.
+ */
+export const PriorTicketSchema = z.strictObject({
+  subject: z.string().max(300),
+  channel: z.string().max(64),
+  status: DecisionStatusSchema,
+  departmentId: DepartmentIdSchema.nullable(),
+  quote: z.string().max(QUOTE_MAX_LENGTH).nullable(),
+  createdAt: z.iso.datetime(),
+});
+export type PriorTicket = z.infer<typeof PriorTicketSchema>;
+
+/** The sender of one ticket and that sender's earlier decided tickets, newest first. */
+export const TicketContextRequestSchema = z.strictObject({ id: z.uuid() });
+export const TicketContextSchema = z.strictObject({
+  email: SenderEmailSchema.nullable(),
+  prior: z.array(PriorTicketSchema).max(SENDER_HISTORY_LIMIT),
+});
+export type TicketContext = z.infer<typeof TicketContextSchema>;
+
+/**
+ * Operator merge: every ticket of `from` moves to `into` (created if new), and `from`
+ * is gone. Decisions are kept exactly as they are.
+ */
+export const MergeSendersSchema = z
+  .strictObject({ from: SenderEmailSchema, into: SenderEmailSchema })
+  .refine((input) => input.from !== input.into, { message: 'The two addresses are the same.', path: ['into'] });
+export type MergeSenders = z.infer<typeof MergeSendersSchema>;
+export type MergeSendersInput = z.input<typeof MergeSendersSchema>;
+export const MergeSendersResultSchema = z.strictObject({
+  email: SenderEmailSchema,
+  movedTickets: z.int().min(0),
+});
+export type MergeSendersResult = z.infer<typeof MergeSendersResultSchema>;
 
 export const OverrideTicketSchema = z.strictObject({
   id: z.uuid(),

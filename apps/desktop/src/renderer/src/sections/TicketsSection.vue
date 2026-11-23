@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { type Department, type TicketView } from '@ticket/shared';
+import { SenderEmailSchema, type Department, type TicketContext, type TicketView } from '@ticket/shared';
 import { computed, onMounted, ref } from 'vue';
 import {
   errorMessage,
   formatConfidence,
+  priorTicketLine,
+  senderLabel,
   STATUS_TONES,
   ticketFields,
   ticketRow,
@@ -23,7 +25,15 @@ const submitNotice = ref('');
 /** The externalId being classified, so Cancel can stop exactly that submit. */
 const inFlightExternalId = ref<string | null>(null);
 const cancelling = ref(false);
-const form = ref({ externalId: '', subject: '', body: '', channel: 'email' });
+const form = ref({ externalId: '', subject: '', body: '', channel: 'email', email: '' });
+
+/** The selected ticket's sender and earlier tickets (what the classifier saw). */
+const context = ref<TicketContext | null>(null);
+const contextError = ref('');
+const mergeOpen = ref(false);
+const mergeInto = ref('');
+const merging = ref(false);
+const mergeMessage = ref<{ tone: 'ok' | 'error'; text: string } | null>(null);
 
 const overriding = ref(false);
 const overrideError = ref('');
@@ -56,6 +66,55 @@ function select(id: string): void {
   selectedId.value = id;
   overrideDepartmentId.value = '';
   overrideError.value = '';
+  mergeOpen.value = false;
+  mergeInto.value = '';
+  mergeMessage.value = null;
+  void loadContext(id);
+}
+
+async function loadContext(id: string): Promise<void> {
+  context.value = null;
+  contextError.value = '';
+  try {
+    const result = await window.api.ticketContext(id);
+    if (selectedId.value === id) context.value = result;
+  } catch (error) {
+    if (selectedId.value === id) contextError.value = errorMessage(error);
+  }
+}
+
+/** Operator merge: this ticket's sender into another address. Decisions are not changed. */
+async function merge(): Promise<void> {
+  const from = context.value?.email;
+  if (!from || merging.value) return;
+  const into = SenderEmailSchema.safeParse(mergeInto.value);
+  if (!into.success) {
+    mergeMessage.value = { tone: 'error', text: into.error.issues[0]?.message ?? 'Enter one email address.' };
+    return;
+  }
+  if (into.data === from) {
+    mergeMessage.value = { tone: 'error', text: 'That is already this sender.' };
+    return;
+  }
+  if (!window.confirm(`Merge every ticket of ${from} into ${into.data}? Decisions stay as they are.`)) return;
+  merging.value = true;
+  mergeMessage.value = null;
+  try {
+    const result = await window.api.mergeSender({ from, into: into.data });
+    const id = selectedId.value;
+    await load();
+    if (id) {
+      select(id);
+      mergeMessage.value = {
+        tone: 'ok',
+        text: `Merged: ${result.movedTickets} ticket${result.movedTickets === 1 ? '' : 's'} now belong to ${result.email}.`,
+      };
+    }
+  } catch (error) {
+    mergeMessage.value = { tone: 'error', text: errorMessage(error) };
+  } finally {
+    merging.value = false;
+  }
 }
 
 async function submit(): Promise<void> {
@@ -63,10 +122,19 @@ async function submit(): Promise<void> {
   submitting.value = true;
   submitError.value = '';
   submitNotice.value = '';
+  // The email is optional. Blank means an unknown sender (no memory).
+  const rawEmail = form.value.email.trim();
+  const email = rawEmail ? SenderEmailSchema.safeParse(rawEmail) : null;
+  if (email && !email.success) {
+    submitError.value = `Email: ${email.error.issues[0]?.message ?? 'enter one email address.'}`;
+    submitting.value = false;
+    return;
+  }
   inFlightExternalId.value = form.value.externalId.trim();
   try {
-    const created = await window.api.classifyTicket({ ...form.value });
-    form.value = { externalId: '', subject: '', body: '', channel: form.value.channel };
+    const { email: _typed, ...ticket } = form.value;
+    const created = await window.api.classifyTicket({ ...ticket, ...(email && { email: email.data }) });
+    form.value = { externalId: '', subject: '', body: '', channel: form.value.channel, email: '' };
     showForm.value = false;
     await load();
     select(created.id);
@@ -147,6 +215,18 @@ onMounted(load);
         <label class="field">
           <span>Channel</span>
           <input v-model="form.channel" required maxlength="64" autocomplete="off" />
+        </label>
+        <label class="field wide">
+          <span>Email <small>optional — the sender's address; blank means an unknown sender</small></span>
+          <input
+            v-model="form.email"
+            type="email"
+            maxlength="254"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="name@example.com"
+            data-testid="ticket-email"
+          />
         </label>
         <label class="field wide">
           <span>Subject</span>
@@ -231,6 +311,8 @@ onMounted(load);
           <dd>{{ selectedRow.department ?? 'None applied' }}</dd>
           <dt>Confidence</dt>
           <dd>{{ formatConfidence(selectedFields.confidence) }}</dd>
+          <dt>Sender</dt>
+          <dd class="plain" data-testid="ticket-sender">{{ senderLabel(selected.email) }}</dd>
           <dt>External id</dt>
           <dd class="plain">{{ selected.externalId }}</dd>
           <dt>Channel</dt>
@@ -254,6 +336,57 @@ onMounted(load);
             <p v-else class="muted">No quote.</p>
           </div>
         </div>
+
+        <section class="sender" aria-labelledby="prior-title">
+          <h3 id="prior-title">Earlier tickets from this sender</h3>
+          <p v-if="selected.email === null" class="muted">Unknown sender: no email, so no sender memory.</p>
+          <p v-else-if="contextError" class="error" role="alert">{{ contextError }}</p>
+          <p v-else-if="context === null" class="muted" role="status">Loading…</p>
+          <p v-else-if="context.prior.length === 0" class="muted">None before this ticket.</p>
+          <ol v-else class="prior" data-testid="prior-tickets">
+            <li v-for="(prior, index) in context.prior" :key="index" class="plain">{{ priorTicketLine(prior) }}</li>
+          </ol>
+          <p v-if="selected.email !== null" class="muted small">
+            Up to 5 decided tickets of this address, newest first, as the classifier receives them: data only.
+          </p>
+
+          <div v-if="selected.email !== null" class="merge">
+            <button
+              v-if="!mergeOpen"
+              type="button"
+              data-testid="merge-open"
+              @click="
+                mergeOpen = true;
+                mergeMessage = null;
+              "
+            >
+              Merge into email…
+            </button>
+            <form v-else class="merge-form" @submit.prevent="merge">
+              <label class="field">
+                <span>Merge {{ selected.email }} into</span>
+                <input
+                  v-model="mergeInto"
+                  type="email"
+                  required
+                  maxlength="254"
+                  autocomplete="off"
+                  spellcheck="false"
+                  placeholder="other@example.com"
+                  data-testid="merge-into"
+                />
+                <small>Every ticket of {{ selected.email }} moves to that address. Decisions are not changed.</small>
+              </label>
+              <div class="actions">
+                <button type="submit" class="primary" :disabled="merging" data-testid="merge-submit">
+                  {{ merging ? 'Merging…' : 'Merge' }}
+                </button>
+                <button type="button" :disabled="merging" @click="mergeOpen = false">Cancel</button>
+              </div>
+            </form>
+            <p v-if="mergeMessage" class="notice" :data-tone="mergeMessage.tone" role="status">{{ mergeMessage.text }}</p>
+          </div>
+        </section>
 
         <form class="override" @submit.prevent="override">
           <label class="field">
@@ -385,6 +518,34 @@ dd {
   border-left: 3px solid var(--accent);
   background: var(--surface-2);
   border-radius: 0 6px 6px 0;
+}
+.sender {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.prior {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+.small {
+  font-size: 12px;
+}
+.merge,
+.merge-form {
+  display: grid;
+  gap: 8px;
+}
+.merge > button {
+  justify-self: start;
+}
+small {
+  color: var(--muted);
+  font-weight: 400;
 }
 .override {
   display: grid;

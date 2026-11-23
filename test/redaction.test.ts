@@ -20,11 +20,13 @@ import { createTokenStore } from '../apps/desktop/src/main/token-store.js';
 const dir = mkdtempSync(join(tmpdir(), 'ticket-redaction-'));
 const API_KEY = 'apikey_' + 'K'.repeat(32);
 const OLLAMA_TOKEN = 'ollamatok_' + 'T'.repeat(32);
+const SENDER_EMAIL = 'private.sender@example.com';
+const MERGED_EMAIL = 'merged.sender@example.org';
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 describe('log redaction', () => {
-  it('keeps the agent token, the API key, and the Ollama token out of the agent output and the desktop log', async () => {
+  it('keeps the agent token, the API key, the Ollama token, and sender emails out of the agent output and the desktop log', async () => {
     const ollama = await fakeOllama();
     const recorder = tsxFork();
     const stateFile = join(dir, 'agent-state.json');
@@ -74,12 +76,19 @@ describe('log redaction', () => {
       await handlers[IpcChannels.createDepartment]({ id: 'billing', name: 'Billing', description: '' });
 
       // Classify from the desktop and through the HTTP API (with the API key).
-      await handlers[IpcChannels.classifyTicket]({ externalId: 'd-1', subject: 'Invoice', body: 'x', channel: 'email' });
+      await handlers[IpcChannels.classifyTicket]({
+        externalId: 'd-1',
+        subject: 'Invoice',
+        body: 'x',
+        channel: 'email',
+        email: SENDER_EMAIL,
+      });
+      await handlers[IpcChannels.mergeSender]({ from: SENDER_EMAIL, into: MERGED_EMAIL });
       const api = createApiApp({ agent: cli, apiKey: API_KEY, log: (m) => apiLog.push(m) });
       const response = await api.request('/v1/tickets:classify', {
         method: 'POST',
         headers: { 'x-api-key': API_KEY, 'content-type': 'application/json' },
-        body: JSON.stringify({ externalId: 'a-1', subject: 'Invoice', body: 'y', channel: 'api' }),
+        body: JSON.stringify({ externalId: 'a-1', subject: 'Invoice', body: 'y', channel: 'api', email: MERGED_EMAIL }),
       });
       expect(response.status).toBe(200);
       // A wrong key and a refused token handoff are logged paths too.
@@ -101,6 +110,8 @@ describe('log redaction', () => {
         ['agent token', agentToken],
         ['API key', API_KEY],
         ['Ollama token', OLLAMA_TOKEN],
+        ['sender email', SENDER_EMAIL],
+        ['merged email', MERGED_EMAIL],
       ] as const) {
         expect(agentOutput, `${name} in agent output`).not.toContain(secret);
         expect(desktopLog, `${name} in desktop log`).not.toContain(secret);

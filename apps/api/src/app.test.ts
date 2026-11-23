@@ -196,3 +196,38 @@ describe('department routes', () => {
     }
   });
 });
+
+describe('sender email over HTTP', () => {
+  beforeAll(startAgent, 30_000);
+  afterAll(stopAgent);
+
+  const call = (path: string, body: unknown) =>
+    createApiApp({ agent: link, apiKey: API_KEY, log: () => undefined }).request(path, {
+      method: 'POST',
+      headers: { 'x-api-key': API_KEY, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  it('accepts an optional email, rejects a value that is not one address, and merges', async () => {
+    const ok = await call('/v1/tickets:classify', {
+      externalId: 'mail-1',
+      subject: 'Invoice',
+      body: 'x',
+      channel: 'email',
+      email: ' Ann@Example.com ',
+    });
+    expect(ok.status).toBe(200);
+    expect(((await ok.json()) as { email: string }).email).toBe('ann@example.com');
+
+    for (const email of ['not-an-email', 'a@b.com, c@d.com', 'Ann <ann@example.com>']) {
+      const bad = await call('/v1/tickets:classify', { externalId: 'mail-2', subject: 's', body: '', channel: 'api', email });
+      expect(bad.status, email).toBe(400);
+    }
+
+    const merged = await call('/v1/senders:merge', { from: 'ann@example.com', into: 'ann.new@example.com' });
+    expect(merged.status).toBe(200);
+    expect(await merged.json()).toEqual({ email: 'ann.new@example.com', movedTickets: 1 });
+    expect((await call('/v1/senders:merge', { from: 'ann@example.com', into: 'x@example.com' })).status).toBe(404);
+    expect((await call('/v1/senders:merge', { from: 'a@example.com', into: 'A@example.com' })).status).toBe(400);
+  }, 60_000);
+});

@@ -24,6 +24,7 @@ describe('OpenAPI', () => {
       '/health',
       '/v1/departments',
       '/v1/departments/{id}',
+      '/v1/senders:merge',
       '/v1/tickets',
       '/v1/tickets/{id}/override',
       '/v1/tickets:classify',
@@ -56,7 +57,7 @@ describe('OpenAPI from the shared schemas', () => {
     const parsed = JSON.parse(doc) as {
       paths: Record<string, Record<string, { responses: Record<string, { headers?: Record<string, unknown> }> }>>;
     };
-    for (const word of ['"aliases"', '"examples"', '"quote"', '"taxonomyVersion"']) expect(doc).toContain(word);
+    for (const word of ['"aliases"', '"examples"', '"quote"', '"taxonomyVersion"', '"email"']) expect(doc).toContain(word);
     const classify = parsed.paths['/v1/tickets:classify']?.['post'];
     expect(Object.keys(classify?.responses ?? {})).toContain('429');
     expect(classify?.responses['429']?.headers).toHaveProperty('Retry-After');

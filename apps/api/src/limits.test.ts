@@ -11,6 +11,7 @@ const ticketView = {
   body: 'Body',
   channel: 'api',
   createdAt: '2026-01-01T00:00:00.000Z',
+  email: null,
   decision: {
     departmentId: 'billing',
     confidence: 0.9,

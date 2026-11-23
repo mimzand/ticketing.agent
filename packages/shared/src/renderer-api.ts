@@ -14,6 +14,9 @@ import {
   type ClassifyTicket,
   type CreateDepartmentInput,
   type TaxonomyState,
+  type MergeSendersInput,
+  type MergeSendersResult,
+  type TicketContext,
   type DeleteDepartment,
   type DeleteDepartmentResult,
   type Department,
@@ -37,6 +40,8 @@ export const IpcChannels = {
   cancelClassify: 'tickets:cancel-classify',
   listTickets: 'tickets:list',
   overrideTicket: 'tickets:override',
+  ticketContext: 'tickets:context',
+  mergeSender: 'senders:merge',
   getSettings: 'settings:get',
   updateSettings: 'settings:update',
   testConnection: 'settings:test-connection',
@@ -74,6 +79,10 @@ export interface RendererApi {
   cancelClassify(input: CancelClassify): Promise<CancelClassifyResult>;
   listTickets(): Promise<readonly TicketView[]>;
   overrideTicket(input: OverrideTicket): Promise<TicketView>;
+  /** The ticket's sender (or null) and that sender's earlier decided tickets. */
+  ticketContext(id: string): Promise<TicketContext>;
+  /** Operator merge: moves every ticket of `from` onto `into`. Decisions are not changed. */
+  mergeSender(input: MergeSendersInput): Promise<MergeSendersResult>;
   getSettings(): Promise<DesktopSettingsView>;
   updateSettings(patch: SettingsPatch): Promise<DesktopSettingsView>;
   testConnection(input: ConnectionTestRequest): Promise<ConnectionTestResult>;

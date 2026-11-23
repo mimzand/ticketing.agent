@@ -18,6 +18,10 @@ import {
   SettingsViewSchema,
   StorageInfoSchema,
   TaxonomyStateSchema,
+  MergeSendersResultSchema,
+  MergeSendersSchema,
+  TicketContextRequestSchema,
+  TicketContextSchema,
   TicketViewSchema,
   TokenStateSchema,
   UpdateDepartmentSchema,
@@ -77,6 +81,10 @@ export function createIpcHandlers(deps: IpcDeps): Record<Channel, IpcHandler> {
       DepartmentSchema.parse(await agent.request('departments.create', input(CreateDepartmentSchema, raw))),
     [IpcChannels.updateDepartment]: async (raw) =>
       DepartmentSchema.parse(await agent.request('departments.update', input(UpdateDepartmentSchema, raw))),
+    [IpcChannels.ticketContext]: async (raw) =>
+      TicketContextSchema.parse(await agent.request('tickets.context', input(TicketContextRequestSchema, { id: raw }))),
+    [IpcChannels.mergeSender]: async (raw) =>
+      MergeSendersResultSchema.parse(await agent.request('senders.merge', input(MergeSendersSchema, raw))),
     [IpcChannels.getTaxonomy]: async () =>
       TaxonomyStateSchema.parse(await agent.request('departments.taxonomy', {})),
     [IpcChannels.deleteDepartment]: async (raw) =>

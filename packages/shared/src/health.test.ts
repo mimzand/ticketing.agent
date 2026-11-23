@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ApiHealthSchema, DesktopHealthSchema } from './index.js';
+import { ApiHealthSchema, ClassifyTicketSchema, DesktopHealthSchema, SenderEmailSchema } from './index.js';
 
 describe('ApiHealthSchema', () => {
   it('accepts both agent states', () => {
@@ -47,5 +47,17 @@ describe('DesktopHealthSchema', () => {
         mode: 'spawned',
       }).success,
     ).toBe(true);
+  });
+});
+
+describe('SenderEmailSchema', () => {
+  it('trims and lowercases one address', () => {
+    expect(SenderEmailSchema.parse('  Ann@Example.COM ')).toBe('ann@example.com');
+    for (const bad of ['', 'ann', 'a@b.com, c@d.com', 'Ann <ann@example.com>', 'a b@example.com', 'a@b.com;c@d.com']) {
+      expect(SenderEmailSchema.safeParse(bad).success, bad).toBe(false);
+    }
+    const ticket = { externalId: 'e', subject: 's', body: '', channel: 'c' };
+    expect(ClassifyTicketSchema.parse(ticket).email).toBeUndefined();
+    expect(ClassifyTicketSchema.safeParse({ ...ticket, email: 'two@a.com three@b.com' }).success).toBe(false);
   });
 });

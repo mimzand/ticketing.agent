@@ -8,6 +8,8 @@ import {
   DeleteDepartmentResultSchema,
   DeleteDepartmentSchema,
   DepartmentSchema,
+  MergeSendersResultSchema,
+  MergeSendersSchema,
   UpdateDepartmentSchema,
   OverrideTicketSchema,
   TicketViewSchema,
@@ -152,4 +154,11 @@ export async function deleteDepartment(agent: AgentLink, id: string): Promise<Js
   return forward(async () =>
     DeleteDepartmentResultSchema.parse(await agent.request('departments.delete', parsed.data)),
   );
+}
+
+/** POST /v1/senders:merge: moves every ticket of `from` onto `into`. Decisions are kept. */
+export async function mergeSenders(c: Context, agent: AgentLink): Promise<JsonResult> {
+  const body = await readBody(c, MergeSendersSchema);
+  if (isJsonResult(body)) return body;
+  return forward(async () => MergeSendersResultSchema.parse(await agent.request('senders.merge', body)));
 }

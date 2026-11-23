@@ -104,6 +104,8 @@ The first message on a connection is `system.hello` (protocol name, version, tok
 | `departments.taxonomy` | the current taxonomy version and its read-only history (version, time, department count) |
 | `tickets.classify` | store the ticket and return the decision with its quote and taxonomy version; the same `externalId` returns the stored decision |
 | `tickets.list` | the 50 most recent tickets |
+| `tickets.context` | a ticket's sender email (or null) and that sender's earlier decided tickets |
+| `senders.merge` | operator merge: every ticket of `from` moves onto `into`; decisions are not changed |
 | `tickets.override` | an active department only; status becomes `overridden` |
 
 Every request and response is validated with Zod. Ticket text is untrusted data in the user message, not in the system instruction.
@@ -121,6 +123,10 @@ Decision: `departmentId` or null, `confidence` (0–1), `rationale`, `status` (`
 SQLite file: `TICKET_DATA_DIR` (default `apps/agent/.data/tickets.db`). `@ticket/storage` applies Drizzle migrations when the agent opens the database. Gitignore `.data`. Electron and the API never open this file.
 
 `createAgentHost` builds one `LlmAgent`. Its system instruction lists each active department's id, name, description, aliases, and examples (operator text JSON-quoted, passed as an instruction provider so ADK does not treat `{…}` as state placeholders). Ticket text is only the user message. Its `outputSchema` is `departmentId`, `confidence`, `rationale`, `quote`. After the model returns, code in the host accepts only an exact active department id (not an alias, not a name) and a confidence at or above the threshold. Otherwise the status is `needs_review` and no label is applied. The quote is kept only when it is an exact substring of that ticket's subject or body and at most 240 characters; otherwise it is stored as null, and the model is not asked again. Network or model errors are status `failed`. The decision is persisted with its quote and taxonomy version. The same `externalId` returns the stored decision, quote included, and does not call the model again.
+
+Sender memory (keyed only by email). `tickets.classify` takes an optional `email`: exactly one address, trimmed and compared case-insensitively (stored lowercased); anything else is `bad_request` / 400. No email means an unknown sender and no memory. An address is never read from the subject or the body, and the model never decides that two tickets are the same person. A person is one normalized email in the agent's `senders` table; a ticket points at one person or none. The same address on two channels is one person; two different addresses stay two people until an operator merges them (`senders.merge`), which moves the tickets of `from` onto `into` and keeps every decision as it is.
+
+After the `externalId` short-circuit, the host loads at most the 5 most recent decided tickets of that email, newest first, and turns them into a data block of subject, channel, status, department id or `none`, quote or `none`, and created time. No body and no rationale. The block goes into the user message after the new ticket, fenced and labelled as untrusted data; the system instruction still lists only departments, aliases, and examples, and says the history cannot change those rules. The host rules are unchanged: a department or a quote that appears in the history counts for nothing; only an active id at or above the threshold is applied, and only a quote found in the new ticket is kept. A repeated `externalId` returns the stored decision without a model call; if the stored ticket had no email and the repeat brings one, the email is attached and nothing is classified again. The email address is never logged.
 
 Model: company Ollama only (`OLLAMA_HOST`, `OLLAMA_MODEL`). Construct `new OllamaLlm(...)` from `@ticket/adk-runtime`, backed by `@ticket/model-provider`. No Gemini model name, no OpenAI, no cloud LLM, no web search.
 
@@ -140,6 +146,7 @@ Hono on `127.0.0.1:8787` (`API_HOST`, `API_PORT`). Each route forwards to the me
 | `POST` | `/v1/tickets:classify` | API key |
 | `GET` | `/v1/tickets` | API key |
 | `POST` | `/v1/tickets/{id}/override` | API key |
+| `POST` | `/v1/senders:merge` | API key |
 
 `X-API-Key` or `Authorization: Bearer`, compared in constant time on a digest, as in `apps/api/src/security.ts`. On loopback, generate a key for the API process when `API_KEY` is unset and print it once. Responses never include the agent token or the Ollama token.
 
@@ -178,7 +185,7 @@ The main process reads `AGENT_STATE_FILE`, connects with `@ticket/agent-client` 
 
 ## Out of v1
 
-Research, chat, a tools package, the legacy runtime, an engine flag, an in-process agent mode, reverse calls into the shell, code execution, `dockerode`, pagination, idempotency-key conflicts, a second UI package. Do not build these unless a prompt asks for them. OpenAPI/Swagger, `safeStorage` for the Ollama token, the Electron utility-process supervisor, department aliases and examples, evidence quotes, taxonomy versions, and the HTTP API's CORS allow-list and classify rate limit are in.
+Research, chat, a tools package, the legacy runtime, an engine flag, an in-process agent mode, reverse calls into the shell, code execution, `dockerode`, an ADK session database, model-decided identity (linking senders by anything but the email field), pagination, idempotency-key conflicts, a second UI package. Do not build these unless a prompt asks for them. OpenAPI/Swagger, `safeStorage` for the Ollama token, the Electron utility-process supervisor, department aliases and examples, evidence quotes, taxonomy versions, and the HTTP API's CORS allow-list and classify rate limit, and sender memory keyed only by email are in.
 
 ## Later
 

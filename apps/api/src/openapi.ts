@@ -6,6 +6,8 @@ import {
   DepartmentChangesSchema,
   DepartmentIdSchema,
   DepartmentSchema,
+  MergeSendersResultSchema,
+  MergeSendersSchema,
   TicketViewSchema,
 } from '@ticket/shared';
 import { z } from 'zod';
@@ -150,6 +152,10 @@ const operations: readonly Operation[] = [
       'Low confidence or an unknown department is needs_review with no department applied. ' +
       'decision.quote is an exact substring of the subject or body (at most 240 characters) or null. ' +
       'decision.taxonomyVersion is the department catalogue version the classify used. ' +
+      'email is optional: one address, trimmed and compared case-insensitively (400 otherwise). ' +
+      'With it, the agent gives the classifier up to 5 earlier decided tickets of that address (subject, channel, status, department, quote, time; no body) as untrusted data. ' +
+      'Without it the sender is unknown and there is no memory. An address inside the subject or body is never used. ' +
+      'A repeated externalId never calls the model again; an email on the repeat is only attached when the stored ticket had none. ' +
       `Limited to ${CLASSIFY_RATE_LIMIT} requests per minute per API key (429 with Retry-After).`,
     auth: true,
     body: ClassifyTicketSchema,
@@ -157,6 +163,23 @@ const operations: readonly Operation[] = [
       '200': { description: 'The stored ticket and its decision.', schema: TicketViewSchema },
       '400': badRequest,
       '429': rateLimited,
+      ...authedErrors,
+    },
+  },
+  {
+    method: 'post',
+    path: '/v1/senders:merge',
+    tag: 'Senders',
+    summary: 'Merge two senders',
+    description:
+      'An operator action. Every ticket of `from` moves onto `into` (created if it has no tickets yet), and `from` is removed. ' +
+      'Decisions are kept exactly as they are. Two addresses stay two people until they are merged.',
+    auth: true,
+    body: MergeSendersSchema,
+    responses: {
+      '200': { description: 'The address the tickets now belong to, and how many moved.', schema: MergeSendersResultSchema },
+      '400': badRequest,
+      '404': { description: 'No ticket is linked to the `from` address.', schema: ErrorSchema },
       ...authedErrors,
     },
   },

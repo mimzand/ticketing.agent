@@ -1,4 +1,4 @@
-import { type DecisionStatus, type Department, type TicketView } from '@ticket/shared';
+import { type DecisionStatus, type Department, type PriorTicket, type TicketView } from '@ticket/shared';
 
 /** What the ticket views show. A review or a failure applies no department. */
 export interface TicketFields {
@@ -81,4 +81,26 @@ export function errorMessage(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
   const match = /^Error invoking remote method '[^']+': (?:\w*Error: )?([\s\S]*)$/.exec(text);
   return (match?.[1] ?? text).trim() || 'The request failed.';
+}
+
+/** "Unknown sender" when the ticket came without an email. */
+export const senderLabel = (email: string | null): string => email ?? 'Unknown sender';
+
+/**
+ * One earlier ticket of the same sender as one plain-text line: the same fields the
+ * classifier saw (subject, channel, status, department id or none, quote or none, time).
+ */
+export function priorTicketLine(
+  prior: PriorTicket,
+  formatDate: (iso: string) => string = (iso) =>
+    new Date(iso).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' }),
+): string {
+  return [
+    formatDate(prior.createdAt),
+    prior.channel,
+    prior.subject,
+    STATUS_LABELS[prior.status],
+    `department: ${prior.departmentId ?? 'none'}`,
+    `quote: ${prior.quote === null ? 'none' : `“${prior.quote}”`}`,
+  ].join(' · ');
 }

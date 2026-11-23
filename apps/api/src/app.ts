@@ -9,6 +9,7 @@ import {
   deleteDepartment,
   listDepartments,
   listTickets,
+  mergeSenders,
   overrideTicket,
   updateDepartment,
 } from './routes.js';
@@ -103,6 +104,10 @@ export function createApiApp(deps: ApiDeps): Hono {
   });
   app.post('/v1/tickets:classify', async (c) => {
     const result = await classifyTicket(c, deps.agent);
+    return c.json(result.body, result.status);
+  });
+  app.post('/v1/senders:merge', async (c) => {
+    const result = await mergeSenders(c, deps.agent);
     return c.json(result.body, result.status);
   });
   app.get('/v1/tickets', async (c) => {

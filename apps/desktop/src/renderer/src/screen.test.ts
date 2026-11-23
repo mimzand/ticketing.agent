@@ -1,6 +1,6 @@
 import { type Department, type TicketView } from '@ticket/shared';
 import { describe, expect, it } from 'vitest';
-import { errorMessage, ticketFields, ticketRow } from './screen.js';
+import { errorMessage, priorTicketLine, senderLabel, ticketFields, ticketRow } from './screen.js';
 
 const base = {
   id: '00000000-0000-4000-8000-000000000001',
@@ -9,6 +9,7 @@ const base = {
   body: 'Please review.',
   channel: 'email',
   createdAt: '2026-01-01T00:00:00.000Z',
+  email: null,
 } as const;
 
 const departments: Department[] = [
@@ -83,5 +84,33 @@ describe('errorMessage', () => {
       "Error invoking remote method 'departments:delete': Error: This department cannot be removed.",
     );
     expect(errorMessage(error)).toBe('This department cannot be removed.');
+  });
+});
+
+describe('sender display', () => {
+  it('shows the address or "Unknown sender"', () => {
+    expect(senderLabel('ann@example.com')).toBe('ann@example.com');
+    expect(senderLabel(null)).toBe('Unknown sender');
+  });
+
+  it('shows a prior ticket as one plain-text line with "none" for a missing department or quote', () => {
+    const line = priorTicketLine(
+      {
+        subject: 'Printer <b>down</b>',
+        channel: 'chat',
+        status: 'needs_review',
+        departmentId: null,
+        quote: null,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+      () => 'Jan 1',
+    );
+    expect(line).toBe('Jan 1 · chat · Printer <b>down</b> · Needs review · department: none · quote: none');
+    expect(
+      priorTicketLine(
+        { subject: 'Invoice', channel: 'email', status: 'labeled', departmentId: 'billing', quote: 'Invoice 18', createdAt: '2026-01-01T00:00:00.000Z' },
+        () => 'Jan 1',
+      ),
+    ).toContain('department: billing · quote: “Invoice 18”');
   });
 });

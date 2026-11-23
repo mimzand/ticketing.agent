@@ -72,7 +72,12 @@ the app", "Attached", or "Reconnecting…" while a crashed agent is restarted).
   override (active departments only). **New ticket** submits one; the button is disabled while
   the classifier runs, and **Cancel** next to it stops that submit: the Ollama request is
   aborted, nothing is stored, and the same external id can be submitted again.
-  `needs_review` and `failed` never show a department. The detail panel shows the
+  `needs_review` and `failed` never show a department. The New ticket form has an optional
+  **Email** field (the sender's address; blank means an unknown sender). The detail panel shows
+  **Sender** (the address, or "Unknown sender"), **Earlier tickets from this sender** (up to 5,
+  newest first, one plain-text line each: time, channel, subject, status, department, quote —
+  what the classifier received), and **Merge into email…**, which asks for the other address and
+  moves every ticket of this sender there without changing any decision. The detail panel also shows the
   **Evidence** quote under the rationale (an exact passage from the ticket, or "No quote")
   and the **Taxonomy** version the classify used.
 - **Departments**: every department, inactive ones included, with its aliases (as chips) and
@@ -119,6 +124,13 @@ Departments can be edited and removed over HTTP too (the id in the path cannot c
 curl -X PATCH -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" -d "{\"active\":false}" http://127.0.0.1:8787/v1/departments/billing
 curl -X PATCH -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" -d "{\"aliases\":[\"Accounts payable\"],\"examples\":[\"My invoice total is wrong\"]}" http://127.0.0.1:8787/v1/departments/billing
 curl -X DELETE -H "X-API-Key: $API_KEY" http://127.0.0.1:8787/v1/departments/billing   # 409 while a decision references it
+```
+
+Classify takes an optional `email`; senders can be merged:
+
+```sh
+curl -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" -d "{\"externalId\":\"ext-2\",\"subject\":\"Refund\",\"body\":\"Where is it?\",\"channel\":\"chat\",\"email\":\"ann@example.com\"}" http://127.0.0.1:8787/v1/tickets:classify
+curl -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" -d "{\"from\":\"ann.old@example.com\",\"into\":\"ann@example.com\"}" http://127.0.0.1:8787/v1/senders:merge
 ```
 
 On loopback, a missing `API_KEY` is generated and printed once when the API starts.

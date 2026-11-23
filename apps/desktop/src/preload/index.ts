@@ -15,6 +15,8 @@ import {
   RENDERER_API_KEY,
   StorageInfoSchema,
   TaxonomyStateSchema,
+  MergeSendersResultSchema,
+  TicketContextSchema,
   TicketViewSchema,
   TokenStateSchema,
   type RendererApi,
@@ -63,6 +65,9 @@ const api: RendererApi = {
     TicketViewSchema.parse(
       await ipcRenderer.invoke(IpcChannels.overrideTicket, OverrideTicketSchema.parse(input)),
     ),
+  ticketContext: async (id) => TicketContextSchema.parse(await ipcRenderer.invoke(IpcChannels.ticketContext, id)),
+  mergeSender: async (input) =>
+    MergeSendersResultSchema.parse(await ipcRenderer.invoke(IpcChannels.mergeSender, input)),
   getSettings: async () =>
     DesktopSettingsViewSchema.parse(await ipcRenderer.invoke(IpcChannels.getSettings)),
   updateSettings: async (patch) =>

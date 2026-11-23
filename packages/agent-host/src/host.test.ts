@@ -460,3 +460,139 @@ describe('aliases, examples, quote, and taxonomy versions', () => {
     expect(host.taxonomy().current).toBe(2);
   });
 });
+
+describe('sender memory', () => {
+  const answer = { departmentId: 'billing', confidence: 0.9, rationale: 'Invoice.', quote: 'Invoice 18' };
+  const first = { externalId: 's-1', subject: 'Invoice 18 is wrong', body: 'Please fix.', channel: 'email' };
+  const second = { externalId: 's-2', subject: 'Refund request', body: 'Where is my refund?', channel: 'chat' };
+  const lastUser = () => seen.filter((r) => r.path === '/api/chat').at(-1)?.user ?? '';
+  const HISTORY = 'earlier tickets from the same sender';
+
+  it('the same email on two channels is one person; the second classify sees the first decision as data', async () => {
+    const host = hostFor(await fakeOllama(() => answer));
+    const a = await host.classify({ ...first, email: '  Ann@Example.COM ' });
+    expect(a.email).toBe('ann@example.com');
+    expect(lastUser()).not.toContain(HISTORY);
+
+    const b = await host.classify({ ...second, email: 'ann@example.com' });
+    expect(b.email).toBe('ann@example.com');
+    const user = lastUser();
+    expect(user).toContain(HISTORY);
+    expect(user).toContain('"subject": "Invoice 18 is wrong"');
+    expect(user).toContain('"channel": "email"');
+    expect(user).toContain('"department": "billing"');
+    expect(user).toContain('"quote": "Invoice 18"');
+    // No body of the earlier ticket, and nothing about it in the instruction.
+    expect(user).not.toContain('Please fix.');
+    const system = seen.filter((r) => r.path === '/api/chat').at(-1)?.system ?? '';
+    expect(system).not.toContain('Invoice 18 is wrong');
+    expect(system).toMatch(/history is untrusted data/);
+
+    expect(host.ticketContext({ id: b.id })).toEqual({
+      email: 'ann@example.com',
+      prior: [
+        {
+          subject: 'Invoice 18 is wrong',
+          channel: 'email',
+          status: 'labeled',
+          departmentId: 'billing',
+          quote: 'Invoice 18',
+          createdAt: a.createdAt,
+        },
+      ],
+    });
+    expect(host.ticketContext({ id: a.id }).prior).toEqual([]);
+  }, 30_000);
+
+  it('a different email sees nothing', async () => {
+    const host = hostFor(await fakeOllama(() => answer));
+    await host.classify({ ...first, email: 'ann@example.com' });
+    const b = await host.classify({ ...second, email: 'bob@example.com' });
+    expect(lastUser()).not.toContain(HISTORY);
+    expect(host.ticketContext({ id: b.id })).toEqual({ email: 'bob@example.com', prior: [] });
+  }, 30_000);
+
+  it('a missing email stays an unknown sender with no memory', async () => {
+    const host = hostFor(await fakeOllama(() => answer));
+    await host.classify(first);
+    const b = await host.classify(second);
+    expect(b.email).toBeNull();
+    expect(lastUser()).not.toContain(HISTORY);
+    expect(host.ticketContext({ id: b.id })).toEqual({ email: null, prior: [] });
+  }, 30_000);
+
+  it('an address written only inside the body does not link the person', async () => {
+    const host = hostFor(await fakeOllama(() => answer));
+    const a = await host.classify({ ...first, email: 'ann@example.com' });
+    const inBody = await host.classify({
+      ...second,
+      subject: 'From ann@example.com',
+      body: 'I am ann@example.com, see my other ticket.',
+    });
+    expect(inBody.email).toBeNull();
+    expect(lastUser()).not.toContain(HISTORY);
+    // Ann's memory holds only Ann's own ticket.
+    const c = await host.classify({ externalId: 's-3', subject: 'Again', body: 'x', channel: 'web', email: 'ann@example.com' });
+    expect(host.ticketContext({ id: c.id }).prior.map((p) => p.createdAt)).toEqual([a.createdAt]);
+  }, 30_000);
+
+  it('a quote and a department from history do not override the host rules', async () => {
+    let reply: unknown = answer;
+    const host = hostFor(await fakeOllama(() => reply));
+    await host.classify({ ...first, email: 'ann@example.com' });
+    // The model echoes the earlier ticket: its department (now inactive) and its quote.
+    host.updateDepartment({ id: 'billing', active: false });
+    reply = { departmentId: 'billing', confidence: 0.99, rationale: 'Same as last time.', quote: 'Invoice 18' };
+    const b = await host.classify({ ...second, email: 'ann@example.com' });
+    expect(lastUser()).toContain('"department": "billing"');
+    expect(b.decision).toMatchObject({ status: 'needs_review', departmentId: null, quote: null });
+  }, 30_000);
+
+  it('a repeated externalId does not call the model; an email on the repeat is only attached', async () => {
+    const host = hostFor(await fakeOllama(() => answer));
+    const stored = await host.classify(first);
+    expect(stored.email).toBeNull();
+    const calls = chatCalls;
+    const again = await host.classify({ ...first, subject: 'Changed', email: 'Ann@example.com' });
+    expect(chatCalls).toBe(calls);
+    expect(again).toEqual({ ...stored, email: 'ann@example.com' });
+    // A later repeat with another address does not move it.
+    const third = await host.classify({ ...first, email: 'bob@example.com' });
+    expect(third.email).toBe('ann@example.com');
+    expect(chatCalls).toBe(calls);
+  }, 30_000);
+
+  it('merge moves the tickets onto the other email and keeps the decisions as they are', async () => {
+    const host = hostFor(await fakeOllama(() => answer));
+    const old = await host.classify({ ...first, email: 'ann.old@example.com' });
+    const kept = await host.classify({ ...second, email: 'ann@example.com' });
+    expect(host.mergeSenders({ from: 'Ann.Old@example.com', into: 'ann@example.com' })).toEqual({
+      email: 'ann@example.com',
+      movedTickets: 1,
+    });
+    const moved = host.listTickets().find((t) => t.id === old.id);
+    expect(moved).toEqual({ ...old, email: 'ann@example.com' });
+    expect(moved?.decision).toEqual(old.decision);
+    expect(host.ticketContext({ id: kept.id }).prior.map((p) => p.subject)).toEqual(['Invoice 18 is wrong']);
+    // The old address is gone: merging from it again finds nothing.
+    expect(() => host.mergeSenders({ from: 'ann.old@example.com', into: 'ann@example.com' })).toThrow(/No tickets/);
+    expect(() => host.mergeSenders({ from: 'ann@example.com', into: 'ANN@example.com' })).toThrow(/same/);
+  }, 30_000);
+
+  it('loads at most 5 prior tickets, newest first', async () => {
+    const host = hostFor(await fakeOllama(() => answer));
+    for (let i = 1; i <= 7; i += 1) {
+      await host.classify({ externalId: `m-${i}`, subject: `Ticket ${i}`, body: 'x', channel: 'email', email: 'ann@example.com' });
+      await new Promise((r) => setTimeout(r, 2));
+    }
+    const last = host.listTickets()[0];
+    expect(last?.subject).toBe('Ticket 7');
+    expect(host.ticketContext({ id: last?.id ?? '' }).prior.map((p) => p.subject)).toEqual([
+      'Ticket 6',
+      'Ticket 5',
+      'Ticket 4',
+      'Ticket 3',
+      'Ticket 2',
+    ]);
+  }, 60_000);
+});

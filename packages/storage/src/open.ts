@@ -11,18 +11,22 @@ import {
   type SettingsValues,
   SettingsValuesSchema,
   TaxonomyStateSchema,
+  normalizeEmail,
+  PriorTicketSchema,
+  SENDER_HISTORY_LIMIT,
+  type PriorTicket,
   type TaxonomyState,
   type TicketView,
   type UpdateDepartment,
 } from '@ticket/shared';
 import BetterSqlite3 from 'better-sqlite3';
-import { count, desc, eq, max } from 'drizzle-orm';
+import { and, count, desc, eq, lt, max, ne } from 'drizzle-orm';
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { existsSync, mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
-import { decisions, departments, settings, taxonomyVersions, tickets } from './schema.js';
+import { decisions, departments, senders, settings, taxonomyVersions, tickets } from './schema.js';
 
 export const RECENT_TICKET_LIMIT = 50;
 
@@ -61,6 +65,22 @@ export interface TicketDatabase {
    * failing the unique constraint. Throws if the externalId already has a decision.
    */
   insertTicket(input: ClassifyTicket): { readonly id: string; readonly createdAt: string };
+  /**
+   * Links a ticket that has no sender to `email` (found or created). A ticket that
+   * already has a sender is left as it is. Returns whether it changed anything.
+   */
+  attachEmail(ticketId: string, email: string): boolean;
+  /**
+   * The sender's most recent decided tickets, newest first, at most 5. With
+   * `before`, only tickets older than that ticket (and never that ticket itself).
+   * Never a body or a rationale.
+   */
+  priorTickets(email: string, before?: { readonly id: string; readonly createdAt: string }): PriorTicket[];
+  /**
+   * Moves every ticket of `from` onto `into` (created if needed) and removes `from`.
+   * Decisions are not touched. `null` when `from` has no sender row.
+   */
+  mergeSenders(from: string, into: string): { readonly email: string; readonly movedTickets: number } | null;
   /** Removes a ticket row that has no decision (e.g. a cancelled classify). Decided rows are kept. */
   discardUndecided(ticketId: string): void;
   saveDecision(ticketId: string, decision: Decision): void;
@@ -75,8 +95,19 @@ type Database = BetterSQLite3Database<{
   decisions: typeof decisions;
   settings: typeof settings;
   taxonomyVersions: typeof taxonomyVersions;
+  senders: typeof senders;
 }>;
 type Tx = Parameters<Parameters<Database['transaction']>[0]>[0];
+
+/** The sender row for a normalized email, created when missing. */
+function senderIdFor(tx: Tx, rawEmail: string): string {
+  const email = normalizeEmail(rawEmail);
+  const found = tx.select({ id: senders.id }).from(senders).where(eq(senders.email, email)).get();
+  if (found) return found.id;
+  const id = randomUUID();
+  tx.insert(senders).values({ id, email, createdAt: new Date().toISOString() }).run();
+  return id;
+}
 
 interface DepartmentRow {
   readonly id: string;
@@ -141,6 +172,7 @@ interface TicketRow {
   readonly status: string;
   readonly quote: string | null;
   readonly taxonomyVersion: number;
+  readonly email: string | null;
 }
 
 function toView(row: TicketRow): TicketView {
@@ -151,6 +183,7 @@ function toView(row: TicketRow): TicketView {
     body: row.body,
     channel: row.channel,
     createdAt: row.createdAt,
+    email: row.email,
     decision: DecisionSchema.parse({
       departmentId: row.departmentId,
       confidence: row.confidence,
@@ -177,9 +210,11 @@ const ticketQuery = (db: Database) =>
       status: decisions.status,
       quote: decisions.quote,
       taxonomyVersion: decisions.taxonomyVersion,
+      email: senders.email,
     })
     .from(tickets)
-    .innerJoin(decisions, eq(decisions.ticketId, tickets.id));
+    .innerJoin(decisions, eq(decisions.ticketId, tickets.id))
+    .leftJoin(senders, eq(senders.id, tickets.senderId));
 
 /**
  * `packages/storage/drizzle` when running from source; `drizzle/` next to the bundle
@@ -199,7 +234,7 @@ export function openTicketDatabase(filePath: string): TicketDatabase {
   const sqlite = new BetterSqlite3(filePath);
   sqlite.pragma('journal_mode = WAL');
   sqlite.pragma('foreign_keys = ON');
-  const db = drizzle(sqlite, { schema: { departments, tickets, decisions, settings, taxonomyVersions } });
+  const db = drizzle(sqlite, { schema: { departments, tickets, decisions, settings, taxonomyVersions, senders } });
   migrate(db, { migrationsFolder: migrationsFolder() });
   // A database from before taxonomy versions that already has departments gets a
   // baseline version 1. Older decisions keep version 0 (unknown).
@@ -323,9 +358,11 @@ export function openTicketDatabase(filePath: string): TicketDatabase {
           .where(eq(tickets.externalId, input.externalId))
           .get();
         if (existing?.decided) throw new Error('This externalId already has a decision.');
+        // The sender comes only from the email field, never from the subject or the body.
+        const senderId = input.email ? senderIdFor(tx, input.email) : null;
         if (existing) {
           tx.update(tickets)
-            .set({ subject: input.subject, body: input.body, channel: input.channel, createdAt })
+            .set({ subject: input.subject, body: input.body, channel: input.channel, createdAt, senderId })
             .where(eq(tickets.id, existing.id))
             .run();
           return { id: existing.id, createdAt };
@@ -339,9 +376,55 @@ export function openTicketDatabase(filePath: string): TicketDatabase {
             body: input.body,
             channel: input.channel,
             createdAt,
+            senderId,
           })
           .run();
         return { id, createdAt };
+      });
+    },
+    attachEmail(ticketId, email) {
+      return db.transaction((tx) => {
+        const row = tx.select({ senderId: tickets.senderId }).from(tickets).where(eq(tickets.id, ticketId)).get();
+        if (!row || row.senderId !== null) return false;
+        tx.update(tickets).set({ senderId: senderIdFor(tx, email) }).where(eq(tickets.id, ticketId)).run();
+        return true;
+      });
+    },
+    priorTickets(email, before) {
+      const filters = [eq(senders.email, normalizeEmail(email))];
+      if (before) filters.push(ne(tickets.id, before.id), lt(tickets.createdAt, before.createdAt));
+      return db
+        .select({
+          subject: tickets.subject,
+          channel: tickets.channel,
+          status: decisions.status,
+          departmentId: decisions.departmentId,
+          quote: decisions.quote,
+          createdAt: tickets.createdAt,
+        })
+        .from(tickets)
+        .innerJoin(senders, eq(senders.id, tickets.senderId))
+        .innerJoin(decisions, eq(decisions.ticketId, tickets.id))
+        .where(and(...filters))
+        .orderBy(desc(tickets.createdAt))
+        .limit(SENDER_HISTORY_LIMIT)
+        .all()
+        .map((row) => PriorTicketSchema.parse(row));
+    },
+    mergeSenders(fromRaw, intoRaw) {
+      const from = normalizeEmail(fromRaw);
+      const into = normalizeEmail(intoRaw);
+      return db.transaction((tx) => {
+        const source = tx.select({ id: senders.id }).from(senders).where(eq(senders.email, from)).get();
+        if (!source) return null;
+        const targetId = senderIdFor(tx, into);
+        const moved = tx
+          .update(tickets)
+          .set({ senderId: targetId })
+          .where(eq(tickets.senderId, source.id))
+          .run().changes;
+        tx.delete(senders).where(eq(senders.id, source.id)).run();
+        return { email: into, movedTickets: moved };
       });
     },
     discardUndecided(ticketId) {

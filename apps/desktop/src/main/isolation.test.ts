@@ -85,6 +85,8 @@ describe('preload', () => {
       'cancelClassify',
       'listTickets',
       'overrideTicket',
+      'ticketContext',
+      'mergeSender',
       'getSettings',
       'updateSettings',
       'testConnection',
