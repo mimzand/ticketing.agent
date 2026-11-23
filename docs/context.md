@@ -2,7 +2,7 @@
 
 This repository: https://github.com/redrock-technology/redrock.ticketing.agent
 
-Pattern source (read only): `C:\Users\zandm\Projects\Algoalliance\ai.agents\sample-agent`. Do not modify it. Do not copy its tree. Its package names are `@rka/*`; this repo uses `@ticket/*` and must not depend on `@rka/*`.
+Pattern source (read only): `C:\Users\zandm\Projects\Algoalliance\ai.agents\sample-agent`. Do not modify it. Do not copy its tree. Its package names are `@rka/*`; this repo uses `@ticket/*` and must not depend on `@rka/*`. Read the files named below for the shape of a boundary, then implement that shape for tickets.
 
 Paste one prompt per fresh Claude session, after the previous phase is done. Do not redo finished work.
 
@@ -10,44 +10,96 @@ Paste one prompt per fresh Claude session, after the previous phase is done. Do 
 
 Windows desktop app. An operator submits a ticket; the agent assigns one organization department and stores that label. Low confidence or an unknown department stays `needs_review` for a human override.
 
-Three processes. Electron is only a client of the HTTP API. A later frontend calls that same API.
+The process split, the package graph, and the loopback protocol come from the pattern source. The domain is tickets, not research or chat. The package manager stays Yarn 4.
+
+## What moves across
+
+| Pattern source | This repo | What changes |
+| --- | --- | --- |
+| `apps/desktop` shell | `@ticket/desktop` | One ticket screen. No chat, research, or settings pages. |
+| `apps/agent` service | `@ticket/agent` | Same role: sole SQLite writer, serves the protocol, no Electron. |
+| `apps/api` HTTP front | `@ticket/api` | Ticket routes only. No Swagger in v1. |
+| `@rka/shared` | `@ticket/shared` | Department, ticket, and decision schemas. No research DTOs. |
+| `@rka/storage` | `@ticket/storage` | Three tables. No task, source, report, or ADK session tables. |
+| `@rka/model-provider` | `@ticket/model-provider` | Ollama HTTP only. Tool calling stays off. |
+| `@rka/adk-runtime` | `@ticket/adk-runtime` | Env sanitising, `OllamaLlm`, one classifier call. No tools, no code execution, no SQLite session service. |
+| `@rka/agent-host` | `@ticket/agent-host` | `createAgentHost` wires storage, Ollama, and the classifier. No second runtime. |
+| `@rka/agent-protocol` | `@ticket/agent-protocol` | Same frame and handshake rules. Protocol name `ticket-agent`, version 1. Ticket methods only. |
+| `@rka/agent-client` | `@ticket/agent-client` | Same role for the shell and the API. |
+| `@rka/tools`, `@rka/agent-runtime` | do not add | No web tools and no legacy engine. |
+| pnpm | Yarn 4 | Corepack, `nodeLinker: node-modules`. |
+
+## Processes
 
 ```text
-Vue renderer → preload window.api → Electron main
-                                        │  HTTP, API key
+Vue renderer ── window.api (Zod) ──▶ Electron main (shell)
+ sandboxed, no network                  │  @ticket/agent-client
+                                        │  loopback + token
                                         ▼
-                                   apps/api     Hono, 127.0.0.1:8787. No database, no ADK
-                                        │  HTTP on 127.0.0.1 only
-                                        ▼
-                                   apps/agent   SQLite + ADK classifier
+                                   apps/agent
+                                      createAgentHost
+                                      SQLite (sole writer)
+                                      Ollama + ADK classifier
+                                        ▲
+                                   apps/api  ── @ticket/agent-client, client kind cli
+                                      Hono on 127.0.0.1:8787
+                                      no database, no ADK, no Electron
+                                        ▲
+                                   another frontend later
 ```
 
-`apps/agent` is the only process that opens SQLite or calls Ollama. `apps/api` forwards to it and never imports `electron`.
+The renderer never sees the agent port, the agent token, or the API key, and it never calls `fetch`. Electron main talks to the agent, not to the HTTP API. The API is the door for other clients. Both clients use `@ticket/agent-client`.
 
-## Decisions
+The agent binds `127.0.0.1` only and writes a state file: protocol, version, host, port, token, pid, `startedAt`. Default path `apps/agent/.agent-data/agent-state.json`. `AGENT_STATE_FILE` overrides it. Gitignore that directory. The host field is the literal `127.0.0.1`.
 
-- Yarn 4 workspaces, Corepack, `nodeLinker: node-modules`. Workspaces are `apps/*` and `packages/*`. Node 22.12+. No pnpm.
-- `packages/contracts` (`@ticket/contracts`): Zod schemas shared by the agent, the API, and the desktop. No Node, no Electron, no other workspace packages.
-- `apps/agent` (`@ticket/agent`): SQLite (`better-sqlite3` + Drizzle) and the classifier. Listens on `127.0.0.1` only (`AGENT_HOST`, `AGENT_PORT`, default `127.0.0.1:8788`). No Electron. No API key; this port is not the product API.
-- `apps/api` (`@ticket/api`): Hono on `127.0.0.1:8787` (`API_HOST`, `API_PORT`). No database. Forwards to the agent over HTTP.
-- `apps/desktop` (`@ticket/desktop`): Electron, Vue 3, TypeScript, Vite. No database. No Ollama calls. The main process calls the HTTP API. It does not call the agent.
-- Agent: `@google/adk` only, inside `apps/agent`, as modules. No Legacy runtime, no engine switch. Do not add `packages/ollama`, `packages/adk`, `packages/model-provider`, `packages/adk-runtime`, `packages/storage`, `packages/agent-host`, `packages/agent-runtime`, `packages/agent-protocol`, `packages/agent-client`, or `packages/tools`.
-- Model: company Ollama only (`OLLAMA_HOST`, `OLLAMA_MODEL`). Construct `new OllamaLlm(...)`. No Gemini model name, no OpenAI, no cloud LLM, no web search.
-- Before importing `@google/adk`, strip the names listed in the pattern source `packages/adk-runtime/src/env.ts` (`TELEMETRY_ENV_VARS`, `CLOUD_ENV_VARS`, and `ADK_FEATURE_FLAG_PATTERN`). Set `OTEL_SDK_DISABLED=true` and `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS=false`.
-- Ollama HTTP follows `packages/model-provider/src/ollama/provider.ts`: `http:` or `https:` only, no userinfo, query, or fragment, `redirect: 'manual'`, bearer token only for HTTPS or loopback, `AbortSignal`, timeouts.
-- Electron's postinstall must run, because it downloads the Electron binary. From phase 2, set `better-sqlite3` `dependenciesMeta.built` to `false` so Yarn keeps the prebuilt binary and does not compile it. Do not copy the pattern source's `pnpm-workspace.yaml`.
-- The desktop package may depend only on `@ticket/contracts`. Only `apps/desktop` may import `electron`. Enforce that with ESLint `no-restricted-imports`.
-- Patterns, not files to copy:
-  - `apps/desktop/src/main/window.ts`
-  - `apps/desktop/src/main/security.ts`
-  - `apps/api/src/security.ts`
-  - `packages/adk-runtime/src/env.ts`
-  - `packages/adk-runtime/src/ollama/ollama-llm.ts`
-  - `packages/storage/src/schema.ts` (migration shape only; not the research tables)
+In v1 the desktop connects to an agent that is already running (`yarn agent:dev`). It does not spawn one. Spawning it as an Electron utility process is later, and it would speak this same protocol.
 
-Leave out of v1: research tools, the loopback agent protocol (frames, handshake, state file), code execution, `dockerode`, Swagger, rate limits, CORS lists, pagination, idempotency-key conflicts, a safeStorage settings UI, a second client package. The desktop connects to an API that is already running. It does not spawn the agent or the API.
+## Packages
 
-## v1 shape
+```text
+@ticket/shared
+    ▲
+@ticket/model-provider     @ticket/storage     @ticket/agent-protocol
+    ▲                            ▲                      ▲
+    └──────── @ticket/adk-runtime                       │
+                   ▲                                    │
+                   └──── @ticket/agent-host ────────────┘
+                              ▲
+                         apps/agent
+                              ▲
+              @ticket/agent-client (desktop main, apps/api)
+```
+
+- Each package has one entry, `exports["."]`, pointing at `src/index.ts`. Deep imports are rejected by ESLint.
+- `@ticket/shared` has no Node, no Electron, and no other workspace packages.
+- `@ticket/model-provider` and `@ticket/storage` depend only on `@ticket/shared`.
+- `@ticket/agent-protocol` depends only on `@ticket/shared` and uses no Node APIs. Frames are a 4-byte big-endian length plus UTF-8 JSON, as in `packages/agent-protocol/src/framing.ts`.
+- `@ticket/adk-runtime` may depend on `@ticket/shared` and `@ticket/model-provider`. It does not depend on storage, the protocol, or the host. `@google/adk` is imported only inside this package, and only after the environment is sanitised.
+- `@ticket/agent-host` is the only package that composes storage, the model provider, and the ADK runtime. It does not import `electron`. `createAgentHost` is the composition root. New classifier wiring goes here, not in `apps/agent` route code and not in Electron main.
+- `@ticket/agent-client` depends on the protocol. It never imports `electron`. The renderer and the preload never import it or the protocol.
+- `apps/agent` calls `createAgentHost` and serves the protocol. It never imports `electron`.
+- `apps/api` depends on `@ticket/shared` and `@ticket/agent-client` only. It never opens SQLite and never imports `@google/adk`.
+- `apps/desktop` main may use `@ticket/agent-client`. Its preload and renderer may use `@ticket/shared` only. Only `apps/desktop` may import `electron`.
+- Enforce these boundaries with ESLint `no-restricted-imports`.
+
+There is no `HostPorts` reverse call in v1. The pattern source uses reverse calls for dialogs, `openExternal`, and `safeStorage`. This product does not ask the shell for those.
+
+## Protocol methods
+
+The first message on a connection is `system.hello` (protocol name, version, token, client kind `shell`, `cli`, or `test`). Any other first message closes the connection. The token is at least 32 random bytes, base64url, compared in constant time. A client that does not finish the handshake in 5 seconds is disconnected. After hello:
+
+| Method | Purpose |
+| --- | --- |
+| `system.ping` | liveness: pid, version, protocol version |
+| `departments.list` | every department |
+| `departments.create` | `id`, `name`, `description` |
+| `tickets.classify` | store the ticket and return the decision; the same `externalId` returns the stored decision |
+| `tickets.list` | the 50 most recent tickets |
+| `tickets.override` | an active department only; status becomes `overridden` |
+
+Every request and response is validated with Zod. Ticket text is untrusted data in the user message, not in the system instruction.
+
+## Classifier
 
 Departments: `id`, `name`, `description`, `active`.
 
@@ -55,9 +107,19 @@ Tickets: `id`, unique `externalId`, `subject`, `body`, `channel`, `createdAt`.
 
 Decision: `departmentId` or null, `confidence` (0–1), `rationale`, `status` (`labeled` | `needs_review` | `overridden` | `failed`). Threshold `CLASSIFY_MIN_CONFIDENCE`, default `0.7`. An unknown department or low confidence becomes `needs_review` with no applied label.
 
-SQLite file: `TICKET_DATA_DIR` (default `apps/agent/.data/tickets.db`). The agent applies Drizzle migrations on startup. Gitignore `.data`. Electron and the API never open this file.
+SQLite file: `TICKET_DATA_DIR` (default `apps/agent/.data/tickets.db`). `@ticket/storage` applies Drizzle migrations when the agent opens the database. Gitignore `.data`. Electron and the API never open this file.
 
-The agent exposes the operations below on its loopback HTTP port. The product routes are the API routes. The API forwards each one and does not classify.
+`createAgentHost` builds one `LlmAgent`. Its `outputSchema` is `departmentId`, `confidence`, `rationale`. After the model returns, code in the host accepts only an active department id and a confidence at or above the threshold. Otherwise the status is `needs_review` and no label is applied. Network or model errors are status `failed`. The decision is persisted. The same `externalId` does not call the model again.
+
+Model: company Ollama only (`OLLAMA_HOST`, `OLLAMA_MODEL`). Construct `new OllamaLlm(...)` from `@ticket/adk-runtime`, backed by `@ticket/model-provider`. No Gemini model name, no OpenAI, no cloud LLM, no web search.
+
+Before importing `@google/adk`, strip the names listed in `packages/adk-runtime/src/env.ts` (`TELEMETRY_ENV_VARS`, `CLOUD_ENV_VARS`, and `ADK_FEATURE_FLAG_PATTERN`). Set `OTEL_SDK_DISABLED=true` and `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS=false`.
+
+Ollama HTTP follows `packages/model-provider/src/ollama/provider.ts`: `http:` or `https:` only, no userinfo, query, or fragment, `redirect: 'manual'`, bearer token only for HTTPS or loopback, `AbortSignal`, timeouts. Do not install `dockerode`.
+
+## HTTP API
+
+Hono on `127.0.0.1:8787` (`API_HOST`, `API_PORT`). Each route forwards to the method above. The API does not classify.
 
 | Method | Path | Auth |
 | --- | --- | --- |
@@ -67,50 +129,73 @@ The agent exposes the operations below on its loopback HTTP port. The product ro
 | `GET` | `/v1/tickets` | API key |
 | `POST` | `/v1/tickets/{id}/override` | API key |
 
-`GET /v1/tickets` returns the most recent tickets, capped at 50. No page query.
+`X-API-Key` or `Authorization: Bearer`, compared in constant time on a digest, as in `apps/api/src/security.ts`. On loopback, generate a key for the API process when `API_KEY` is unset and print it once. Responses never include the agent token or the Ollama token.
 
-`X-API-Key` or `Authorization: Bearer`, compared in constant time on a digest. On loopback, generate a key for the API process when `API_KEY` is unset and print it once. Responses never include the Ollama token.
+`GET /health` returns `{ "ok": true, "service": "ticket-api", "agent": "connected" | "unavailable" }`. From phase 2 it also reports whether Ollama is reachable and the configured model name, by asking the agent. The API learns that the agent is up by `system.ping`.
 
-`GET /health` returns `{ "ok": true, "service": "ticket-api", "agent": "connected" | "unavailable" }`. From phase 2 it also reports whether Ollama is reachable and the configured model name.
+## Desktop shell
 
-The same `externalId` returns the stored decision and does not call the model again. That check lives in the agent. Override accepts only an active department and sets `overridden`.
+Electron, Vue 3, TypeScript, Vite. Window flags, as in `apps/desktop/src/main/window.ts`: `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, `webSecurity: true`. The preload exposes a fixed `window.api`. Ticket text is plain text.
 
-Electron window: `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, `webSecurity: true`. The renderer talks only through a fixed `window.api`. Ticket text is plain text. The renderer never sees the API key.
+The main process reads `AGENT_STATE_FILE`, connects with `@ticket/agent-client` as client kind `shell`, and validates payloads with `@ticket/shared`. The screen shows agent health, creates a department, submits a ticket, lists recent tickets, and overrides a department. The submit control is disabled while a request is in flight.
+
+## Tooling
+
+- Yarn 4 workspaces, Corepack, `nodeLinker: node-modules` in `.yarnrc.yml`. Workspaces are `apps/*` and `packages/*`. Node 22.12+. No pnpm. Do not copy `pnpm-workspace.yaml`.
+- Electron's postinstall must run, because it downloads the Electron binary. From phase 2, set `better-sqlite3` `dependenciesMeta.built` to `false` so Yarn keeps the prebuilt binary and does not compile it.
+- TypeScript strict, ESM, Vitest, ESLint.
+
+## Patterns, not files to copy
+
+- `apps/desktop/src/main/window.ts` and `apps/desktop/src/main/security.ts` — window isolation.
+- `apps/desktop/src/preload/index.ts` — a fixed `window.api`.
+- `apps/agent/src/server.ts` and `apps/agent/src/state-file.ts` — loopback server and state file.
+- `apps/api/src/security.ts` and `apps/api/src/agent-link.ts` — API key, and one lazy client connection.
+- `packages/agent-protocol/src/handshake.ts`, `envelope.ts`, `framing.ts` — hello, token, frames.
+- `packages/agent-client/src/connect.ts` — read the state file, handshake, typed requests.
+- `packages/adk-runtime/src/env.ts` and `packages/adk-runtime/src/ollama/ollama-llm.ts` — sanitise, then `OllamaLlm`.
+- `packages/model-provider/src/ollama/provider.ts` — host, redirect, and token rules.
+- `packages/storage/src/schema.ts` — migration shape only, not the research tables.
+- `packages/agent-host/src/agent-host.ts` — one composition function. Do not port chat or research.
+
+## Out of v1
+
+Research, chat, a tools package, the legacy runtime, an engine flag, an in-process agent mode, an Electron utility-process supervisor, reverse calls into the shell, `safeStorage`, code execution, `dockerode`, OpenAPI/Swagger, rate limits, CORS lists, pagination, idempotency-key conflicts, a second UI package. Do not build these unless a prompt asks for them.
 
 ## Later
 
-Evidence quotes, department examples and aliases, taxonomy versions, OpenAPI/Swagger, the loopback agent protocol, a non-Electron client, spawning the agent from Electron, a settings screen with `safeStorage`, abort end to end, crash recovery, log redaction tests, rate limit, CORS. Do not build these unless a prompt asks for them.
+Evidence quotes, department examples and aliases, taxonomy versions, OpenAPI/Swagger, spawning the agent from Electron on this same protocol, a settings screen with `safeStorage`, abort end to end, crash recovery, log redaction tests, rate limit, CORS.
 
 ---
 
-## Prompt 1 — Scaffold
+## Prompt 1 — Scaffold the structure
 
 ```text
-Read docs/context.md. Implement only the v1 scaffold. Stop before SQLite, ADK, Ollama, and the ticket UI.
+Read docs/context.md, including "What moves across", "Processes", and "Packages". Implement only that skeleton. Stop before SQLite, ADK, Ollama, model-provider, storage, agent-host, and the ticket UI.
 
-Yarn 4 workspace (Corepack, nodeLinker: node-modules) with @ticket/contracts, @ticket/agent, @ticket/api, and @ticket/desktop.
-- Agent: GET /health on 127.0.0.1:8788 returns { "ok": true, "service": "ticket-agent" }, validated by a Zod schema in @ticket/contracts. Bind loopback only.
-- API: GET /health returns { "ok": true, "service": "ticket-api", "agent": "connected" | "unavailable" }, validated by a Zod schema in @ticket/contracts. The API calls the agent over HTTP and does nothing else with that response.
-- Desktop: one window that shows the API health result. Preload exposes only getHealth. Main reads API_BASE_URL (default http://127.0.0.1:8787). The renderer has no Node and no network of its own. The desktop does not call the agent.
-- TypeScript strict, ESM, Vitest, ESLint. The desktop package may depend only on @ticket/contracts. Only the desktop package may import electron.
+Yarn 4 workspace (Corepack, nodeLinker: node-modules) with @ticket/shared, @ticket/agent-protocol, @ticket/agent-client, @ticket/agent, @ticket/api, and @ticket/desktop. One entry point per package. ESLint rejects a deep import and a boundary break from the context.
+- Protocol name ticket-agent, version 1. Frames are a 4-byte big-endian length plus UTF-8 JSON. system.hello then system.ping. Reject any other first message and a wrong token. Compare the token in constant time. The state file names 127.0.0.1 only. Handshake timeout is 5 seconds.
+- Agent: listen on 127.0.0.1, write the state file, serve hello and ping. No Electron.
+- API: GET /health returns { "ok": true, "service": "ticket-api", "agent": "connected" | "unavailable" }, validated by Zod in @ticket/shared. The API reaches the agent only through @ticket/agent-client.
+- Desktop: one window that shows the agent ping. Preload exposes only getHealth. Main reads AGENT_STATE_FILE and uses @ticket/agent-client. The renderer has no Node and no network. The desktop does not call the HTTP API.
 - Root scripts: agent:dev, api:dev, api:up (agent and api together), dev for the desktop, typecheck, test, lint.
 - .yarnrc.yml: nodeLinker node-modules. Electron's postinstall must be allowed to run.
-- Tests: /health matches the schema when the agent is up and when it is down; BrowserWindow uses the four isolation flags from the context.
+- Tests: /health matches the schema when the agent is up and when it is down; a bad token is rejected; the state-file host is only 127.0.0.1; BrowserWindow uses the four isolation flags from the context.
 - README: Node 22.12+, Yarn 4, and the dev commands (yarn). Point at this file.
 
-Do not copy the sample-agent tree. Do not add a frame protocol, a state file, or extra packages. Run typecheck, test, and lint.
+Do not copy the sample-agent tree. Do not add the packages that phase 2 introduces. Run typecheck, test, and lint.
 ```
 
-## Prompt 2 — Agent classifier and API
+## Prompt 2 — Storage, ADK, and the API
 
 ```text
-Read docs/context.md. Phase 1 is done. Add SQLite, the ADK classifier, and the HTTP routes. Do not build the ticket UI. Do not add the "Later" items.
+Read docs/context.md. Phase 1 is done. Add @ticket/storage, @ticket/model-provider, @ticket/adk-runtime, and @ticket/agent-host, then the ticket methods and the HTTP routes. Follow the package graph. Do not build the ticket UI. Do not add the "Out of v1" items.
 
-Inside apps/agent, not in a new package:
-- SQLite at TICKET_DATA_DIR (default apps/agent/.data/tickets.db). Apply Drizzle migrations on startup. Tables for departments, tickets, and decisions, matching the v1 shape. Zod schemas live in @ticket/contracts. Set better-sqlite3 dependenciesMeta.built to false. Electron and the API never open this file.
-- Modules for the Ollama HTTP client and an ADK OllamaLlm. Follow the host rules in the context. The agent is one LlmAgent with outputSchema departmentId, confidence, rationale. Ticket text goes in the user message as untrusted data, not in the system instruction.
-- Classify in code after the model returns: active department ids only, confidence >= CLASSIFY_MIN_CONFIDENCE, otherwise needs_review. Network or model errors are status failed. Persist the decision.
-- Serve the operations on the agent port. The API routes from the context table forward to them and do not classify. API key auth except /health. /health also reports ollama reachable or unreachable and the configured model name, never the token. Same externalId returns the stored decision without a second model call. Override accepts only an active department and sets overridden.
+- storage: departments, tickets, and decisions, matching the context. Zod schemas live in @ticket/shared. SQLite at TICKET_DATA_DIR (default apps/agent/.data/tickets.db). Apply Drizzle migrations when the agent opens it. Set better-sqlite3 dependenciesMeta.built to false. Only the agent process opens the file.
+- model-provider: the Ollama HTTP client, with the host rules in the context. No tool calling.
+- adk-runtime: sanitise the environment, then OllamaLlm. @google/adk is imported only here. No session tables, no tools, no dockerode.
+- agent-host: createAgentHost wires those three. One LlmAgent, outputSchema departmentId, confidence, rationale. Ticket text is untrusted user data. Classify in code after the model returns. Persist the decision. The same externalId does not call the model again.
+- apps/agent calls createAgentHost and serves the protocol methods from the context. The HTTP routes forward to them and do not classify. API key auth except /health. /health also reports ollama reachable or unreachable and the configured model name, never a token. Override accepts only an active department and sets overridden.
 
 Tests use a fake Ollama HTTP server, not the company server: valid label, unknown department, low confidence, Ollama down, missing API key, repeat externalId. Also test that sanitize removes a dummy GOOGLE_API_KEY before ADK loads; do not print the value.
 
@@ -120,16 +205,16 @@ Run typecheck, test, and lint. Add a curl example to the README.
 ## Prompt 3 — Electron client
 
 ```text
-Read docs/context.md. Phases 1 and 2 are done. Build the v1 desktop client. Do not change the agent or the API unless a phase 2 test is failing. Do not add the "Later" items.
+Read docs/context.md. Phases 1 and 2 are done. Build the v1 desktop client on the existing shell. Do not change the agent or the API unless a phase 2 test is failing. Do not add the "Out of v1" items.
 
-One Vue 3 screen, Composition API, no UI library. The main process calls the HTTP API. The renderer never calls fetch and never sees the API key.
-- API health.
+One Vue 3 screen, Composition API, no UI library. The main process calls the agent through @ticket/agent-client. The renderer never calls fetch, never sees the agent token, and never sees the API key.
+- Agent health from system.ping.
 - Create department (id, name, description).
 - Submit ticket (externalId, subject, body, channel) and show status, department, confidence, and rationale as plain text.
-- List recent tickets.
+- List the recent tickets.
 - Override a ticket by picking an active department.
 
-API_BASE_URL and API_KEY come from the environment via the main process. Keep the preload as a fixed window.api. Validate responses with @ticket/contracts in the main process. Disable the submit button while a request is in flight.
+Keep the preload as a fixed window.api. Validate responses with @ticket/shared in the main process. Disable the submit button while a request is in flight.
 
 Test the screen state for a labeled result and a needs_review result with no department applied. Run typecheck, test, and lint. In the summary, say how to run the agent, the API, and the desktop app together.
 ```
