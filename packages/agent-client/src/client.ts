@@ -192,6 +192,12 @@ export async function connectAgent(options: AgentClientOptions): Promise<AgentCl
       const timer = setTimeout(() => {
         settle(id);
         reject(new AgentClientError('timeout', `${method} timed out.`));
+        // Give up on the server too. Otherwise a classify keeps running, stores a
+        // decision, and holds the queue after this caller has already moved on.
+        if (method !== 'system.hello' && method !== 'system.cancel' && !socket.destroyed) {
+          const cancel: Envelope = { id: randomUUID(), kind: 'req', method: 'system.cancel', payload: { id } };
+          socket.write(encodeFrame(cancel));
+        }
       }, requestTimeoutMs);
       const settle = (key: string) => {
         pending.delete(key);

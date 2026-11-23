@@ -18,7 +18,9 @@ import { type DesktopLog } from './desktop-log.js';
  * - Otherwise it forks exactly one child with Electron's utilityProcess: the built
  *   apps/agent service (`out/agent/main.js`). No shell, no exec, no arguments at all.
  *   Paths go in the environment; the agent generates its own token and writes it only
- *   to the state file. The API key and the Ollama token are never passed.
+ *   to the state file. The child inherits the runtime path and the Ollama host, model,
+ *   and confidence overrides. It does not inherit the API key, the Ollama token, or
+ *   any other secret. The shell hands the Ollama token over the loopback after connect.
  * - A crash removes the stale state file and restarts the agent with a short, bounded
  *   backoff. Quit asks `system.shutdown`, waits, and then the state file is gone.
  */
@@ -47,17 +49,47 @@ export const agentEntryPath = (appPath: string): string => join(appPath, 'out', 
 export const RESTART_BACKOFF_MS = [250, 500, 1_000, 2_000, 4_000] as const;
 /** A child that ran this long counts as healthy: the backoff starts over. */
 export const STABLE_RUN_MS = 30_000;
-export const AGENT_START_TIMEOUT_MS = 30_000;
+/** Cold start loads ADK. Past this, the child is stopped instead of left holding the database. */
+export const AGENT_START_TIMEOUT_MS = 60_000;
 export const AGENT_STOP_TIMEOUT_MS = 5_000;
 const POLL_MS = 50;
 
-/** Variables that change how the runtime itself starts are not inherited. */
-const DROPPED_ENV = /^(NODE_OPTIONS|ELECTRON_.*|API_KEY)$/i;
+/**
+ * Names the child may inherit, compared case-insensitively. Anything else — API keys,
+ * OLLAMA_TOKEN, cloud credentials — stays in the parent. The Ollama token reaches the
+ * agent later, over the loopback, from the shell's safeStorage copy.
+ */
+const INHERITED_ENV = new Set([
+  'path',
+  'pathext',
+  'systemroot',
+  'windir',
+  'comspec',
+  'systemdrive',
+  'temp',
+  'tmp',
+  'tmpdir',
+  'userprofile',
+  'homedrive',
+  'homepath',
+  'appdata',
+  'localappdata',
+  'home',
+  'user',
+  'logname',
+  'lang',
+  'lc_all',
+  'tz',
+  'node_env',
+  'ollama_host',
+  'ollama_model',
+  'classify_min_confidence',
+]);
 
 /**
- * The child's environment: this process's (so OLLAMA_HOST, OLLAMA_MODEL, and
- * CLASSIFY_MIN_CONFIDENCE still override settings), minus runtime switches and the
- * HTTP API key, plus the fixed paths and the parent pid for the agent's watchdog.
+ * The child's environment: just enough to run, plus OLLAMA_HOST, OLLAMA_MODEL, and
+ * CLASSIFY_MIN_CONFIDENCE so those still override saved settings. Then the fixed
+ * paths and the parent pid for the agent's watchdog.
  */
 export function agentEnvironment(
   env: NodeJS.ProcessEnv,
@@ -65,7 +97,7 @@ export function agentEnvironment(
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
-    if (value === undefined || DROPPED_ENV.test(key)) continue;
+    if (value === undefined || !INHERITED_ENV.has(key.toLowerCase())) continue;
     out[key] = value;
   }
   out['AGENT_STATE_FILE'] = paths.stateFile;
@@ -231,9 +263,25 @@ export function createAgentSupervisor(deps: AgentSupervisorDeps): AgentSuperviso
       else forked.once('spawn', () => resolve());
       void exited?.then(() => resolve());
     });
-    await waitForStateFile(forked.pid, () => hasExited);
-    if (child === forked) setState('running');
-    log.info(`Agent started by the desktop (pid ${forked.pid ?? '?'}).`);
+    try {
+      await waitForStateFile(forked.pid, () => hasExited);
+      if (child === forked) setState('running');
+      log.info(`Agent started by the desktop (pid ${forked.pid ?? '?'}).`);
+    } catch (error) {
+      // A child that never publishes a state file must not keep the database.
+      // Leaving it alive makes the next start refuse, because it still looks live.
+      if (!hasExited && child === forked) {
+        log.warn('The agent did not become ready; stopping it.');
+        forked.kill();
+        const stopped = await settlesWithin(exited, stopTimeoutMs);
+        if (!stopped && child === forked) {
+          child = undefined;
+          setState('failed');
+          log.warn('The agent kept running after a failed start.');
+        }
+      }
+      throw error;
+    }
   }
 
   function onExit(forked: AgentChild, code: number | null, ranMs: number): void {

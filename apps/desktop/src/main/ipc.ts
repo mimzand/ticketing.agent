@@ -1,7 +1,9 @@
 import { type AgentLink } from '@ticket/agent-client';
 import {
   CancelClassifySchema,
+  CLASSIFY_TIMEOUT_DEFAULT_MS,
   ClassifyTicketSchema,
+  classifyRequestTimeoutMs,
   ConnectionTestRequestSchema,
   ConnectionTestResultSchema,
   CreateDepartmentSchema,
@@ -84,8 +86,16 @@ export function createIpcHandlers(deps: IpcDeps): Record<Channel, IpcHandler> {
       const controller = new AbortController();
       submits.set(ticket.externalId, controller);
       try {
-        // The signal reaches the agent (system.cancel) and from there the Ollama request.
-        const result = await agent.request('tickets.classify', ticket, { signal: controller.signal });
+        // Wait past the model's own budget. A client timeout also sends system.cancel,
+        // so a slow call cannot store a decision after the window has moved on.
+        let timeoutMs = classifyRequestTimeoutMs(CLASSIFY_TIMEOUT_DEFAULT_MS);
+        try {
+          const view = SettingsViewSchema.parse(await agent.request('settings.get', {}));
+          timeoutMs = classifyRequestTimeoutMs(view.fields.classifyTimeoutMs.value);
+        } catch {
+          // The classify call below reports a missing agent.
+        }
+        const result = await agent.request('tickets.classify', ticket, { signal: controller.signal, timeoutMs });
         return TicketViewSchema.parse(result);
       } finally {
         if (submits.get(ticket.externalId) === controller) submits.delete(ticket.externalId);

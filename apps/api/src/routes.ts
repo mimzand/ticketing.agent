@@ -1,6 +1,9 @@
 import { AgentClientError, type AgentLink } from '@ticket/agent-client';
 import {
+  CLASSIFY_TIMEOUT_DEFAULT_MS,
   ClassifyTicketSchema,
+  classifyRequestTimeoutMs,
+  SettingsViewSchema,
   CreateDepartmentSchema,
   DeleteDepartmentResultSchema,
   DeleteDepartmentSchema,
@@ -82,7 +85,14 @@ export async function createDepartment(c: Context, agent: AgentLink): Promise<Js
 export async function classifyTicket(c: Context, agent: AgentLink): Promise<JsonResult> {
   const body = await readBody(c, ClassifyTicketSchema);
   if (isJsonResult(body)) return body;
-  return forward(async () => TicketViewSchema.parse(await agent.request('tickets.classify', body)));
+  let timeoutMs = classifyRequestTimeoutMs(CLASSIFY_TIMEOUT_DEFAULT_MS);
+  try {
+    const view = SettingsViewSchema.parse(await agent.request('settings.get', {}));
+    timeoutMs = classifyRequestTimeoutMs(view.fields.classifyTimeoutMs.value);
+  } catch {
+    // The classify call below reports that the agent is down.
+  }
+  return forward(async () => TicketViewSchema.parse(await agent.request('tickets.classify', body, { timeoutMs })));
 }
 
 export async function listTickets(agent: AgentLink): Promise<JsonResult> {

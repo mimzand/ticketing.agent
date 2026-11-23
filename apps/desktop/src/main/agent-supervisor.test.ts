@@ -176,6 +176,65 @@ describe('agent supervisor', () => {
       TICKET_AGENT_PARENT_PID: '1',
     });
   });
+
+  it('keeps runtime paths and model overrides, and drops the Ollama token', () => {
+    const env = agentEnvironment(
+      {
+        PATH: '/bin',
+        OLLAMA_HOST: 'http://h',
+        OLLAMA_MODEL: 'qwen3:8b',
+        CLASSIFY_MIN_CONFIDENCE: '0.8',
+        OLLAMA_TOKEN: 'secret-token',
+        AWS_SECRET_ACCESS_KEY: 'aws-secret',
+        API_KEY: 'k',
+      },
+      { stateFile: '/s', databaseFile: '/d', parentPid: 1 },
+    );
+    expect(env['PATH']).toBe('/bin');
+    expect(env['OLLAMA_MODEL']).toBe('qwen3:8b');
+    expect(env['CLASSIFY_MIN_CONFIDENCE']).toBe('0.8');
+    expect(env['OLLAMA_TOKEN']).toBeUndefined();
+    expect(env['AWS_SECRET_ACCESS_KEY']).toBeUndefined();
+    expect(env['API_KEY']).toBeUndefined();
+  });
+
+  it('stops a child that never publishes a state file', async () => {
+    const exits: ((code: number | null) => void)[] = [];
+    let kills = 0;
+    const hung = {
+      pid: 5150,
+      stdout: null,
+      stderr: null,
+      kill() {
+        kills += 1;
+        for (const listener of exits.splice(0)) listener(1);
+        return true;
+      },
+      once(event: 'spawn' | 'exit', listener: (...args: never[]) => void) {
+        if (event === 'spawn') listener();
+        if (event === 'exit') exits.push(listener as (code: number | null) => void);
+      },
+    };
+    const local = createAgentSupervisor({
+      fork: () => hung,
+      entry: 'unused',
+      stateFile,
+      databaseFile: join(dir, 'tickets.db'),
+      env: {},
+      parentPid: 1,
+      appVersion: '0',
+      log: createDesktopLog({ console: false }),
+      backoffMs: [60_000],
+      startTimeoutMs: 40,
+    });
+    try {
+      await expect(local.ensure()).rejects.toThrow(/did not start in time/);
+      expect(kills).toBe(1);
+      expect(local.childPid()).toBeUndefined();
+    } finally {
+      await local.stop();
+    }
+  });
 });
 
 describe('classify through the supervised agent', () => {

@@ -16,6 +16,13 @@ export const OLLAMA_DEFAULT_BASE_URL = 'http://127.0.0.1:11434';
 export const OLLAMA_DEFAULT_MODEL = 'qwen3:8b';
 export const OLLAMA_CONNECT_TIMEOUT_DEFAULT_MS = 5_000;
 export const CLASSIFY_TIMEOUT_DEFAULT_MS = 120_000;
+/** Extra wait so the client outlives the model's own budget and can hear its answer. */
+export const CLASSIFY_REQUEST_MARGIN_MS = 15_000;
+
+/** How long a caller waits for `tickets.classify`. Longer than the model timeout. */
+export function classifyRequestTimeoutMs(classifyTimeoutMs: number): number {
+  return classifyTimeoutMs + CLASSIFY_REQUEST_MARGIN_MS;
+}
 
 /** Why a server URL is refused. Never echoes the URL (it may hold credentials). */
 export function ollamaUrlProblem(raw: string): string | null {

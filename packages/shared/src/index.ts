@@ -49,7 +49,9 @@ export {
   type UpdateDepartment,
 } from './ticket.js';
 export {
+  CLASSIFY_REQUEST_MARGIN_MS,
   CLASSIFY_TIMEOUT_DEFAULT_MS,
+  classifyRequestTimeoutMs,
   ClassifyTimeoutMsSchema,
   ConnectTimeoutMsSchema,
   ConnectionTestRequestSchema,
