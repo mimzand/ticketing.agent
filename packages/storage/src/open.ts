@@ -83,7 +83,16 @@ export interface TicketDatabase {
   mergeSenders(from: string, into: string): { readonly email: string; readonly movedTickets: number } | null;
   /** Removes a ticket row that has no decision (e.g. a cancelled classify). Decided rows are kept. */
   discardUndecided(ticketId: string): void;
+  /** Writes a classifier decision. Never touches the replaced department. */
   saveDecision(ticketId: string, decision: Decision): void;
+  /**
+   * An operator override, in one transaction: the first time a decision becomes
+   * `overridden`, the department on the row at that moment (or null) is kept as the
+   * replaced department; later overrides change only the department. Confidence,
+   * rationale, quote, and taxonomy version are left as they are. `false` when the
+   * ticket has no decision.
+   */
+  overrideDecision(ticketId: string, departmentId: string): boolean;
   getById(id: string): TicketView | null;
   listRecent(): readonly TicketView[];
   close(): void;
@@ -400,6 +409,7 @@ export function openTicketDatabase(filePath: string): TicketDatabase {
           status: decisions.status,
           departmentId: decisions.departmentId,
           quote: decisions.quote,
+          replacedDepartmentId: decisions.replacedDepartmentId,
           createdAt: tickets.createdAt,
         })
         .from(tickets)
@@ -458,6 +468,25 @@ export function openTicketDatabase(filePath: string): TicketDatabase {
           },
         })
         .run();
+    },
+    overrideDecision(ticketId, departmentId) {
+      return db.transaction((tx) => {
+        const current = tx
+          .select({ status: decisions.status, departmentId: decisions.departmentId })
+          .from(decisions)
+          .where(eq(decisions.ticketId, ticketId))
+          .get();
+        if (!current) return false;
+        tx.update(decisions)
+          .set(
+            current.status === 'overridden'
+              ? { departmentId }
+              : { departmentId, status: 'overridden', replacedDepartmentId: current.departmentId },
+          )
+          .where(eq(decisions.ticketId, ticketId))
+          .run();
+        return true;
+      });
     },
     getById(id) {
       const row = ticketQuery(db).where(eq(tickets.id, id)).get();

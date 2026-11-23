@@ -75,8 +75,10 @@ the app", "Attached", or "Reconnecting…" while a crashed agent is restarted).
   `needs_review` and `failed` never show a department. The New ticket form has an optional
   **Email** field (the sender's address; blank means an unknown sender). The detail panel shows
   **Sender** (the address, or "Unknown sender"), **Earlier tickets from this sender** (up to 5,
-  newest first, one plain-text line each: time, channel, subject, status, department, quote —
-  what the classifier received), and **Merge into email…**, which asks for the other address and
+  newest first: one summary line such as "2 earlier tickets · billing 2 · 1 corrected by an
+  operator", then one plain-text line each: time, channel, subject, status, department, quote,
+  and "was: <id>" when an operator replaced the classifier's department — what the classifier
+  received), and **Merge into email…**, which asks for the other address and
   moves every ticket of this sender there without changing any decision. The detail panel also shows the
   **Evidence** quote under the rationale (an exact passage from the ticket, or "No quote")
   and the **Taxonomy** version the classify used.

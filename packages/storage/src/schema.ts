@@ -42,6 +42,12 @@ export const decisions = sqliteTable('decisions', {
   status: text('status').notNull(),
   quote: text('quote'),
   taxonomyVersion: integer('taxonomy_version').notNull().default(0),
+  /**
+   * The department the classifier had applied when an operator first overrode this
+   * decision (null when it applied none, and for decisions never overridden).
+   * Set once by `overrideDecision`; `saveDecision` never writes it.
+   */
+  replacedDepartmentId: text('replaced_department_id'),
 });
 
 /**

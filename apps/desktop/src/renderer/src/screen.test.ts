@@ -1,6 +1,6 @@
 import { type Department, type TicketView } from '@ticket/shared';
 import { describe, expect, it } from 'vitest';
-import { errorMessage, priorTicketLine, senderLabel, ticketFields, ticketRow } from './screen.js';
+import { errorMessage, priorTicketLine, senderLabel, senderSummaryLine, ticketFields, ticketRow } from './screen.js';
 
 const base = {
   id: '00000000-0000-4000-8000-000000000001',
@@ -101,6 +101,7 @@ describe('sender display', () => {
         status: 'needs_review',
         departmentId: null,
         quote: null,
+        replacedDepartmentId: null,
         createdAt: '2026-01-01T00:00:00.000Z',
       },
       () => 'Jan 1',
@@ -108,9 +109,53 @@ describe('sender display', () => {
     expect(line).toBe('Jan 1 · chat · Printer <b>down</b> · Needs review · department: none · quote: none');
     expect(
       priorTicketLine(
-        { subject: 'Invoice', channel: 'email', status: 'labeled', departmentId: 'billing', quote: 'Invoice 18', createdAt: '2026-01-01T00:00:00.000Z' },
+        {
+          subject: 'Invoice',
+          channel: 'email',
+          status: 'labeled',
+          departmentId: 'billing',
+          quote: 'Invoice 18',
+          replacedDepartmentId: null,
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
         () => 'Jan 1',
       ),
-    ).toContain('department: billing · quote: “Invoice 18”');
+    ).toBe('Jan 1 · email · Invoice · Labeled · department: billing · quote: “Invoice 18”');
+  });
+
+  it('adds "was: <id>" only when the classifier department was replaced', () => {
+    expect(
+      priorTicketLine(
+        {
+          subject: 'Laptop',
+          channel: 'email',
+          status: 'overridden',
+          departmentId: 'it',
+          quote: null,
+          replacedDepartmentId: 'billing',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+        () => 'Jan 1',
+      ),
+    ).toBe('Jan 1 · email · Laptop · Overridden · department: it · quote: none · was: billing');
+  });
+
+  it('summarizes earlier tickets in one line', () => {
+    expect(
+      senderSummaryLine({ tickets: 2, byDepartment: [{ departmentId: 'billing', count: 2 }], overridden: 1 }),
+    ).toBe('2 earlier tickets · billing 2 · 1 corrected by an operator');
+    expect(
+      senderSummaryLine({
+        tickets: 3,
+        byDepartment: [
+          { departmentId: 'it', count: 2 },
+          { departmentId: 'none', count: 1 },
+        ],
+        overridden: 0,
+      }),
+    ).toBe('3 earlier tickets · it 2 · none 1');
+    expect(senderSummaryLine({ tickets: 1, byDepartment: [{ departmentId: 'it', count: 1 }], overridden: 0 })).toBe(
+      '1 earlier ticket · it 1',
+    );
   });
 });

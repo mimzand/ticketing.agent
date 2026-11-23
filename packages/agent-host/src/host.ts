@@ -34,6 +34,7 @@ import {
   type TicketView,
   type TokenState,
   type UpdateDepartment,
+  senderSummary,
 } from '@ticket/shared';
 import { type TicketDatabase } from '@ticket/storage';
 import { overriddenKeys, resolveSettings, type ResolvedSettings } from './settings.js';
@@ -163,8 +164,9 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
     ticketContext(input) {
       const ticket = db.getById(input.id);
       if (!ticket) throw new HostError('No such ticket.', 'not_found');
-      if (ticket.email === null) return { email: null, prior: [] };
-      return { email: ticket.email, prior: db.priorTickets(ticket.email, { id: ticket.id, createdAt: ticket.createdAt }) };
+      if (ticket.email === null) return { email: null, prior: [], summary: senderSummary([]) };
+      const prior = db.priorTickets(ticket.email, { id: ticket.id, createdAt: ticket.createdAt });
+      return { email: ticket.email, prior, summary: senderSummary(prior) };
     },
     mergeSenders(input) {
       const parsed = MergeSendersSchema.safeParse(input);
@@ -192,15 +194,10 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       if (!ticket) throw new HostError('No such ticket.', 'not_found');
       const department = db.listDepartments().find((item) => item.id === input.departmentId);
       if (!department?.active) throw new HostError('That department is not active.');
-      db.saveDecision(ticket.id, {
-        departmentId: department.id,
-        confidence: ticket.decision.confidence,
-        rationale: ticket.decision.rationale,
-        status: 'overridden',
-        // The evidence and the version the classifier used stay as they were.
-        quote: ticket.decision.quote,
-        taxonomyVersion: ticket.decision.taxonomyVersion,
-      });
+      // Only the department and status change; the first override keeps what the
+      // classifier had applied as the replaced department. Confidence, rationale,
+      // quote, and taxonomy version stay as they were.
+      if (!db.overrideDecision(ticket.id, department.id)) throw new HostError('No such ticket.', 'not_found');
       const updated = db.getById(ticket.id);
       if (!updated) throw new HostError('No such ticket.', 'not_found');
       return updated;

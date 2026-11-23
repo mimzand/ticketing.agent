@@ -1,4 +1,10 @@
-import { type DecisionStatus, type Department, type PriorTicket, type TicketView } from '@ticket/shared';
+import {
+  type DecisionStatus,
+  type Department,
+  type PriorTicket,
+  type SenderSummary,
+  type TicketView,
+} from '@ticket/shared';
 
 /** What the ticket views show. A review or a failure applies no department. */
 export interface TicketFields {
@@ -88,7 +94,8 @@ export const senderLabel = (email: string | null): string => email ?? 'Unknown s
 
 /**
  * One earlier ticket of the same sender as one plain-text line: the same fields the
- * classifier saw (subject, channel, status, department id or none, quote or none, time).
+ * classifier saw (subject, channel, status, department id or none, quote or none, time),
+ * plus "was: <id>" when an operator replaced the classifier's department.
  */
 export function priorTicketLine(
   prior: PriorTicket,
@@ -102,5 +109,19 @@ export function priorTicketLine(
     STATUS_LABELS[prior.status],
     `department: ${prior.departmentId ?? 'none'}`,
     `quote: ${prior.quote === null ? 'none' : `“${prior.quote}”`}`,
+    ...(prior.replacedDepartmentId === null ? [] : [`was: ${prior.replacedDepartmentId}`]),
+  ].join(' · ');
+}
+
+/**
+ * The numeric summary of the earlier tickets as one plain line, e.g.
+ * "2 earlier tickets · billing 2 · 1 corrected by an operator". The corrected
+ * clause is left out when nothing was overridden.
+ */
+export function senderSummaryLine(summary: SenderSummary): string {
+  return [
+    `${summary.tickets} earlier ${summary.tickets === 1 ? 'ticket' : 'tickets'}`,
+    ...summary.byDepartment.map((item) => `${item.departmentId} ${item.count}`),
+    ...(summary.overridden > 0 ? [`${summary.overridden} corrected by an operator`] : []),
   ].join(' · ');
 }

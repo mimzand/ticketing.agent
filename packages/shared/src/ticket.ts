@@ -186,15 +186,49 @@ export const PriorTicketSchema = z.strictObject({
   status: DecisionStatusSchema,
   departmentId: DepartmentIdSchema.nullable(),
   quote: z.string().max(QUOTE_MAX_LENGTH).nullable(),
+  /** What the classifier had applied before an operator first overrode this ticket. */
+  replacedDepartmentId: DepartmentIdSchema.nullable(),
   createdAt: z.iso.datetime(),
 });
 export type PriorTicket = z.infer<typeof PriorTicketSchema>;
+
+/** Bucket for prior tickets that carry no department. */
+export const NO_DEPARTMENT = 'none';
+
+/** Counts over the same prior rows (never a wider history). */
+export const SenderSummarySchema = z.strictObject({
+  tickets: z.number().int().min(0).max(SENDER_HISTORY_LIMIT),
+  byDepartment: z.array(
+    z.strictObject({ departmentId: z.string().min(1).max(64), count: z.number().int().min(1) }),
+  ),
+  overridden: z.number().int().min(0),
+});
+export type SenderSummary = z.infer<typeof SenderSummarySchema>;
+
+/**
+ * Pure summary of earlier tickets: row count, current departments (null counted as
+ * "none") by count descending then id ascending, and how many were overridden.
+ */
+export function senderSummary(prior: readonly PriorTicket[]): SenderSummary {
+  const counts = new Map<string, number>();
+  let overridden = 0;
+  for (const row of prior) {
+    const key = row.departmentId ?? NO_DEPARTMENT;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+    if (row.status === 'overridden') overridden += 1;
+  }
+  const byDepartment = [...counts]
+    .map(([departmentId, count]) => ({ departmentId, count }))
+    .sort((a, b) => b.count - a.count || (a.departmentId < b.departmentId ? -1 : a.departmentId > b.departmentId ? 1 : 0));
+  return { tickets: prior.length, byDepartment, overridden };
+}
 
 /** The sender of one ticket and that sender's earlier decided tickets, newest first. */
 export const TicketContextRequestSchema = z.strictObject({ id: z.uuid() });
 export const TicketContextSchema = z.strictObject({
   email: SenderEmailSchema.nullable(),
   prior: z.array(PriorTicketSchema).max(SENDER_HISTORY_LIMIT),
+  summary: SenderSummarySchema,
 });
 export type TicketContext = z.infer<typeof TicketContextSchema>;
 

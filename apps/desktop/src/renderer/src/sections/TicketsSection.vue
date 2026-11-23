@@ -6,6 +6,7 @@ import {
   formatConfidence,
   priorTicketLine,
   senderLabel,
+  senderSummaryLine,
   STATUS_TONES,
   ticketFields,
   ticketRow,
@@ -343,9 +344,12 @@ onMounted(load);
           <p v-else-if="contextError" class="error" role="alert">{{ contextError }}</p>
           <p v-else-if="context === null" class="muted" role="status">Loading…</p>
           <p v-else-if="context.prior.length === 0" class="muted">None before this ticket.</p>
-          <ol v-else class="prior" data-testid="prior-tickets">
-            <li v-for="(prior, index) in context.prior" :key="index" class="plain">{{ priorTicketLine(prior) }}</li>
-          </ol>
+          <template v-else>
+            <p class="plain" data-testid="sender-summary">{{ senderSummaryLine(context.summary) }}</p>
+            <ol class="prior" data-testid="prior-tickets">
+              <li v-for="(prior, index) in context.prior" :key="index" class="plain">{{ priorTicketLine(prior) }}</li>
+            </ol>
+          </template>
           <p v-if="selected.email !== null" class="muted small">
             Up to 5 decided tickets of this address, newest first, as the classifier receives them: data only.
           </p>

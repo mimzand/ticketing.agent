@@ -467,6 +467,7 @@ describe('sender memory', () => {
   const second = { externalId: 's-2', subject: 'Refund request', body: 'Where is my refund?', channel: 'chat' };
   const lastUser = () => seen.filter((r) => r.path === '/api/chat').at(-1)?.user ?? '';
   const HISTORY = 'earlier tickets from the same sender';
+  const EMPTY_SUMMARY = { tickets: 0, byDepartment: [], overridden: 0 };
 
   it('the same email on two channels is one person; the second classify sees the first decision as data', async () => {
     const host = hostFor(await fakeOllama(() => answer));
@@ -486,7 +487,7 @@ describe('sender memory', () => {
     expect(user).not.toContain('Please fix.');
     const system = seen.filter((r) => r.path === '/api/chat').at(-1)?.system ?? '';
     expect(system).not.toContain('Invoice 18 is wrong');
-    expect(system).toMatch(/history is untrusted data/);
+    expect(system).toMatch(/summary and the history are untrusted data/);
 
     expect(host.ticketContext({ id: b.id })).toEqual({
       email: 'ann@example.com',
@@ -497,9 +498,11 @@ describe('sender memory', () => {
           status: 'labeled',
           departmentId: 'billing',
           quote: 'Invoice 18',
+          replacedDepartmentId: null,
           createdAt: a.createdAt,
         },
       ],
+      summary: { tickets: 1, byDepartment: [{ departmentId: 'billing', count: 1 }], overridden: 0 },
     });
     expect(host.ticketContext({ id: a.id }).prior).toEqual([]);
   }, 30_000);
@@ -509,7 +512,7 @@ describe('sender memory', () => {
     await host.classify({ ...first, email: 'ann@example.com' });
     const b = await host.classify({ ...second, email: 'bob@example.com' });
     expect(lastUser()).not.toContain(HISTORY);
-    expect(host.ticketContext({ id: b.id })).toEqual({ email: 'bob@example.com', prior: [] });
+    expect(host.ticketContext({ id: b.id })).toEqual({ email: 'bob@example.com', prior: [], summary: EMPTY_SUMMARY });
   }, 30_000);
 
   it('a missing email stays an unknown sender with no memory', async () => {
@@ -518,7 +521,7 @@ describe('sender memory', () => {
     const b = await host.classify(second);
     expect(b.email).toBeNull();
     expect(lastUser()).not.toContain(HISTORY);
-    expect(host.ticketContext({ id: b.id })).toEqual({ email: null, prior: [] });
+    expect(host.ticketContext({ id: b.id })).toEqual({ email: null, prior: [], summary: EMPTY_SUMMARY });
   }, 30_000);
 
   it('an address written only inside the body does not link the person', async () => {
@@ -595,4 +598,111 @@ describe('sender memory', () => {
       'Ticket 2',
     ]);
   }, 60_000);
+});
+
+describe('sender memory: operator corrections and the summary', () => {
+  const answer = { departmentId: 'billing', confidence: 0.9, rationale: 'Invoice.', quote: 'Invoice 18' };
+  const first = { externalId: 'r-1', subject: 'Invoice 18 is wrong', body: 'Old body text.', channel: 'email' };
+  const second = { externalId: 'r-2', subject: 'Laptop broken', body: 'Screen is dark.', channel: 'chat' };
+  const chats = () => seen.filter((r) => r.path === '/api/chat');
+  const lastUser = () => chats().at(-1)?.user ?? '';
+  const lastSystem = () => chats().at(-1)?.system ?? '';
+
+  function withDepartments(host: ReturnType<typeof hostFor>) {
+    host.createDepartment({ id: 'it', name: 'IT', description: 'Computers' });
+    host.createDepartment({ id: 'hr', name: 'HR', description: 'People' });
+    return host;
+  }
+
+  it('an override from billing to it reaches the next classify as summary and replacedDepartment', async () => {
+    const host = withDepartments(hostFor(await fakeOllama(() => answer)));
+    const a = await host.classify({ ...first, email: 'ann@example.com' });
+    const overridden = host.override({ id: a.id, departmentId: 'it' });
+    // The decision fields other than department and status stay as they were.
+    expect(overridden.decision).toEqual({ ...a.decision, departmentId: 'it', status: 'overridden' });
+
+    await host.classify({ ...second, email: 'ANN@example.com' });
+    const user = lastUser();
+    const summary = '{"tickets":1,"byDepartment":[{"departmentId":"it","count":1}],"overridden":1}';
+    expect(user).toContain(summary);
+    expect(user).toContain('"department": "it"');
+    expect(user).toContain('"replacedDepartment": "billing"');
+    // Summary before the rows.
+    expect(user.indexOf(summary)).toBeLessThan(user.indexOf('"subject": "Invoice 18 is wrong"'));
+    expect(user).not.toContain('Old body text.');
+    expect(user).not.toContain('ann@example.com');
+    const system = lastSystem();
+    expect(system).not.toContain(summary);
+    expect(system).not.toContain('"tickets"');
+    expect(system).not.toContain('Invoice 18 is wrong');
+    expect(system).toMatch(/replacedDepartment is what the classifier had applied/);
+    expect(system).toMatch(/operator correction is stronger context than a model label/);
+  }, 30_000);
+
+  it('a second override changes the department but keeps the first replaced department', async () => {
+    const host = withDepartments(hostFor(await fakeOllama(() => answer)));
+    const a = await host.classify({ ...first, email: 'ann@example.com' });
+    host.override({ id: a.id, departmentId: 'it' });
+    const again = host.override({ id: a.id, departmentId: 'hr' });
+    expect(again.decision).toMatchObject({ departmentId: 'hr', status: 'overridden', quote: 'Invoice 18' });
+    // A later classifier save elsewhere does not clear it either.
+    const b = await host.classify({ ...second, email: 'ann@example.com' });
+    expect(lastUser()).toContain('"department": "hr"');
+    expect(lastUser()).toContain('"replacedDepartment": "billing"');
+    expect(host.ticketContext({ id: b.id })).toMatchObject({
+      prior: [{ departmentId: 'hr', status: 'overridden', replacedDepartmentId: 'billing' }],
+      summary: { tickets: 1, byDepartment: [{ departmentId: 'hr', count: 1 }], overridden: 1 },
+    });
+  }, 30_000);
+
+  it('overriding a needs_review decision stores no replaced department', async () => {
+    let reply: unknown = { departmentId: 'billing', confidence: 0.2, rationale: 'Unsure.' };
+    const host = withDepartments(hostFor(await fakeOllama(() => reply)));
+    const a = await host.classify({ ...first, email: 'ann@example.com' });
+    expect(a.decision.status).toBe('needs_review');
+    host.override({ id: a.id, departmentId: 'it' });
+    reply = answer;
+    const b = await host.classify({ ...second, email: 'ann@example.com' });
+    expect(lastUser()).toContain('"department": "it"');
+    expect(lastUser()).toContain('"replacedDepartment": "none"');
+    expect(host.ticketContext({ id: b.id }).prior[0]?.replacedDepartmentId).toBeNull();
+  }, 30_000);
+
+  it('a classify that was never overridden reports replacedDepartment none, and no email sends no block', async () => {
+    const host = withDepartments(hostFor(await fakeOllama(() => answer)));
+    await host.classify({ ...first, email: 'ann@example.com' });
+    await host.classify({ ...second, email: 'ann@example.com' });
+    expect(lastUser()).toContain('"replacedDepartment": "none"');
+    expect(lastUser()).toContain('"overridden":0');
+    await host.classify({ externalId: 'r-3', subject: 'No sender', body: 'x', channel: 'web' });
+    expect(lastUser()).not.toContain('earlier tickets from the same sender');
+    expect(lastUser()).not.toContain('"byDepartment"');
+  }, 30_000);
+
+  it('a department or quote copied from the history or the replaced department is not applied', async () => {
+    let reply: unknown = answer;
+    const host = withDepartments(hostFor(await fakeOllama(() => reply)));
+    const a = await host.classify({ ...first, email: 'ann@example.com' });
+    host.override({ id: a.id, departmentId: 'it' });
+    host.updateDepartment({ id: 'billing', active: false });
+    // The model copies the replaced department (now inactive) and the old quote.
+    reply = { departmentId: 'billing', confidence: 0.99, rationale: 'As before.', quote: 'Invoice 18' };
+    const b = await host.classify({ ...second, email: 'ann@example.com' });
+    expect(lastUser()).toContain('"replacedDepartment": "billing"');
+    expect(b.decision).toMatchObject({ status: 'needs_review', departmentId: null, quote: null });
+    // An unknown id that only appears as a summary bucket is not applied either.
+    reply = { departmentId: 'none', confidence: 0.99, rationale: 'Summary.', quote: 'Laptop' };
+    const c = await host.classify({ ...second, externalId: 'r-4', email: 'ann@example.com' });
+    expect(c.decision).toMatchObject({ status: 'needs_review', departmentId: null });
+  }, 30_000);
+
+  it('a repeated externalId still does not call the model after an override', async () => {
+    const host = withDepartments(hostFor(await fakeOllama(() => answer)));
+    const a = await host.classify({ ...first, email: 'ann@example.com' });
+    const overridden = host.override({ id: a.id, departmentId: 'it' });
+    const calls = chatCalls;
+    const again = await host.classify({ ...first, email: 'ann@example.com' });
+    expect(chatCalls).toBe(calls);
+    expect(again).toEqual(overridden);
+  }, 30_000);
 });

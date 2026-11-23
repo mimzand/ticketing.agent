@@ -60,7 +60,11 @@ function fakeAgent() {
     'departments.create': () => department,
     'departments.update': () => department,
     'departments.delete': () => ({ id: 'billing', deleted: true }),
-    'tickets.context': () => ({ email: 'ann@example.com', prior: [] }),
+    'tickets.context': () => ({
+      email: 'ann@example.com',
+      prior: [],
+      summary: { tickets: 0, byDepartment: [], overridden: 0 },
+    }),
     'senders.merge': () => ({ email: 'ann@example.com', movedTickets: 1 }),
     'departments.taxonomy': () => ({ current: 1, history: [{ version: 1, createdAt: '2026-01-01T00:00:00.000Z', departmentCount: 1 }] }),
     'tickets.classify': () => ticket,
