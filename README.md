@@ -72,10 +72,17 @@ the app", "Attached", or "Reconnecting…" while a crashed agent is restarted).
   override (active departments only). **New ticket** submits one; the button is disabled while
   the classifier runs, and **Cancel** next to it stops that submit: the Ollama request is
   aborted, nothing is stored, and the same external id can be submitted again.
-  `needs_review` and `failed` never show a department.
-- **Departments**: every department, inactive ones included. Add (id, name, description; new
-  ones are active), **Edit** (name, description, active; the id never changes), and **Remove**.
-  Remove is refused while any ticket decision references the id; deactivate it instead.
+  `needs_review` and `failed` never show a department. The detail panel shows the
+  **Evidence** quote under the rationale (an exact passage from the ticket, or "No quote")
+  and the **Taxonomy** version the classify used.
+- **Departments**: every department, inactive ones included, with its aliases (as chips) and
+  examples (a "N examples" toggle). Add (id, name, description, and optionally aliases and
+  examples, one per line; new ones are active), **Edit** (name, description, active, aliases,
+  examples; the id never changes), and **Remove**. Remove is refused while any ticket decision
+  references the id; deactivate it instead. An alias is 1–64 characters, at most 20 per
+  department, and belongs to one department only; an example is at most 300 characters, at
+  most 20 per department. The heading shows the current **Taxonomy vN**, and **Taxonomy
+  history** at the bottom lists every version (time, department count), read only.
 - **Settings**: the theme switch (dark by default, remembered in the renderer's localStorage)
   and four categories:
   - *Ollama Connection*: server URL, connection timeout, **Test connection** (tests the URL in
@@ -110,14 +117,21 @@ Departments can be edited and removed over HTTP too (the id in the path cannot c
 
 ```sh
 curl -X PATCH -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" -d "{\"active\":false}" http://127.0.0.1:8787/v1/departments/billing
+curl -X PATCH -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" -d "{\"aliases\":[\"Accounts payable\"],\"examples\":[\"My invoice total is wrong\"]}" http://127.0.0.1:8787/v1/departments/billing
 curl -X DELETE -H "X-API-Key: $API_KEY" http://127.0.0.1:8787/v1/departments/billing   # 409 while a decision references it
 ```
 
 On loopback, a missing `API_KEY` is generated and printed once when the API starts.
 
+`POST /v1/tickets:classify` is limited to 30 requests per minute per API key (in memory, per API
+process); over the limit it answers 429 with `Retry-After`. Browsers may call the API only from the
+exact origins in `CORS_ORIGINS` (comma-separated, empty by default, `*` refused), for example
+`CORS_ORIGINS=https://intranet.example.com`.
+
 Environment variables: `AGENT_STATE_FILE`, `API_HOST` (default `127.0.0.1`), `API_PORT` (default
 `8787`), `API_KEY`, `TICKET_DATA_DIR` (default `apps/agent/.data/tickets.db`), `OLLAMA_HOST`,
-`OLLAMA_MODEL`, `OLLAMA_TOKEN`, `CLASSIFY_MIN_CONFIDENCE` (default `0.7`).
+`OLLAMA_MODEL`, `OLLAMA_TOKEN`, `CLASSIFY_MIN_CONFIDENCE` (default `0.7`), `CORS_ORIGINS` (default
+empty).
 
 ## Layout
 

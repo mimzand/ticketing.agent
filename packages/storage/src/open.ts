@@ -3,37 +3,51 @@ import {
   DepartmentSchema,
   TicketViewSchema,
   type ClassifyTicket,
-  type CreateDepartment,
+  CreateDepartmentSchema,
+  type CreateDepartmentInput,
   type Decision,
   type Department,
   type SettingsPatch,
   type SettingsValues,
   SettingsValuesSchema,
+  TaxonomyStateSchema,
+  type TaxonomyState,
   type TicketView,
   type UpdateDepartment,
 } from '@ticket/shared';
 import BetterSqlite3 from 'better-sqlite3';
-import { count, desc, eq } from 'drizzle-orm';
+import { count, desc, eq, max } from 'drizzle-orm';
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { existsSync, mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
-import { decisions, departments, settings, tickets } from './schema.js';
+import { decisions, departments, settings, taxonomyVersions, tickets } from './schema.js';
 
 export const RECENT_TICKET_LIMIT = 50;
 
 export interface TicketDatabase {
   listDepartments(): readonly Department[];
-  /** Inserts an active department. Throws when the id already exists. */
-  insertDepartment(input: CreateDepartment): Department;
-  /** Changes name, description, or active. The id never changes. Null when no such row. */
+  /**
+   * Inserts an active department and records a new taxonomy version, in one
+   * transaction. Throws when the id already exists.
+   */
+  insertDepartment(input: CreateDepartmentInput): Department;
+  /**
+   * Changes name, description, active, aliases, or examples. The id never changes.
+   * A real change records a new taxonomy version; an edit that changes nothing does not.
+   * Null when no such row.
+   */
   updateDepartment(input: UpdateDepartment): Department | null;
   /**
-   * Deletes the row only when no decision references its id, in one transaction.
-   * Tickets and decisions are never touched.
+   * Deletes the row only when no decision references its id, and records a new
+   * taxonomy version, in one transaction. Tickets and decisions are never touched.
    */
   deleteDepartment(id: string): 'deleted' | 'referenced' | 'missing';
+  /** The current taxonomy version: 0 until the first department exists. */
+  taxonomyVersion(): number;
+  /** The current version and every recorded version, newest first. */
+  taxonomy(): TaxonomyState;
   /** Saved non-secret settings. A stored value that no longer validates is ignored. */
   readSettings(): Partial<SettingsValues>;
   /** Saves validated values in one transaction. */
@@ -60,7 +74,59 @@ type Database = BetterSQLite3Database<{
   tickets: typeof tickets;
   decisions: typeof decisions;
   settings: typeof settings;
+  taxonomyVersions: typeof taxonomyVersions;
 }>;
+type Tx = Parameters<Parameters<Database['transaction']>[0]>[0];
+
+interface DepartmentRow {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+  readonly active: boolean;
+  readonly aliases: string;
+  readonly examples: string;
+}
+
+const parseList = (json: string): unknown => {
+  try {
+    return JSON.parse(json) as unknown;
+  } catch {
+    return [];
+  }
+};
+
+function toDepartment(row: DepartmentRow): Department {
+  return DepartmentSchema.parse({ ...row, aliases: parseList(row.aliases), examples: parseList(row.examples) });
+}
+
+function toRow(department: Department): DepartmentRow {
+  return {
+    ...department,
+    aliases: JSON.stringify(department.aliases),
+    examples: JSON.stringify(department.examples),
+  };
+}
+
+/** Records the catalogue as it is now under the next version number. */
+function recordVersion(tx: Tx): number {
+  const catalogue = tx
+    .select()
+    .from(departments)
+    .orderBy(departments.id)
+    .all()
+    .map((row) => toDepartment(row));
+  const latest = tx.select({ v: max(taxonomyVersions.version) }).from(taxonomyVersions).get()?.v ?? 0;
+  const version = latest + 1;
+  tx.insert(taxonomyVersions)
+    .values({
+      version,
+      createdAt: new Date().toISOString(),
+      departmentCount: catalogue.length,
+      snapshot: JSON.stringify(catalogue),
+    })
+    .run();
+  return version;
+}
 
 interface TicketRow {
   readonly id: string;
@@ -73,6 +139,8 @@ interface TicketRow {
   readonly confidence: number;
   readonly rationale: string;
   readonly status: string;
+  readonly quote: string | null;
+  readonly taxonomyVersion: number;
 }
 
 function toView(row: TicketRow): TicketView {
@@ -88,6 +156,8 @@ function toView(row: TicketRow): TicketView {
       confidence: row.confidence,
       rationale: row.rationale,
       status: row.status,
+      quote: row.quote,
+      taxonomyVersion: row.taxonomyVersion,
     }),
   });
 }
@@ -105,6 +175,8 @@ const ticketQuery = (db: Database) =>
       confidence: decisions.confidence,
       rationale: decisions.rationale,
       status: decisions.status,
+      quote: decisions.quote,
+      taxonomyVersion: decisions.taxonomyVersion,
     })
     .from(tickets)
     .innerJoin(decisions, eq(decisions.ticketId, tickets.id));
@@ -127,8 +199,15 @@ export function openTicketDatabase(filePath: string): TicketDatabase {
   const sqlite = new BetterSqlite3(filePath);
   sqlite.pragma('journal_mode = WAL');
   sqlite.pragma('foreign_keys = ON');
-  const db = drizzle(sqlite, { schema: { departments, tickets, decisions, settings } });
+  const db = drizzle(sqlite, { schema: { departments, tickets, decisions, settings, taxonomyVersions } });
   migrate(db, { migrationsFolder: migrationsFolder() });
+  // A database from before taxonomy versions that already has departments gets a
+  // baseline version 1. Older decisions keep version 0 (unknown).
+  db.transaction((tx) => {
+    const hasVersions = (tx.select({ n: count() }).from(taxonomyVersions).get()?.n ?? 0) > 0;
+    const hasDepartments = (tx.select({ n: count() }).from(departments).get()?.n ?? 0) > 0;
+    if (!hasVersions && hasDepartments) recordVersion(tx);
+  });
 
   return {
     listDepartments() {
@@ -136,27 +215,33 @@ export function openTicketDatabase(filePath: string): TicketDatabase {
         .select()
         .from(departments)
         .all()
-        .map((row) => DepartmentSchema.parse(row));
+        .map((row) => toDepartment(row));
     },
     insertDepartment(input) {
-      const row = DepartmentSchema.parse({ ...input, active: true });
-      db.insert(departments).values(row).run();
-      return row;
+      const department = DepartmentSchema.parse({ ...CreateDepartmentSchema.parse(input), active: true });
+      db.transaction((tx) => {
+        tx.insert(departments).values(toRow(department)).run();
+        recordVersion(tx);
+      });
+      return department;
     },
     updateDepartment(input) {
       return db.transaction((tx) => {
-        const current = tx.select().from(departments).where(eq(departments.id, input.id)).get();
-        if (!current) return null;
+        const row = tx.select().from(departments).where(eq(departments.id, input.id)).get();
+        if (!row) return null;
+        const current = toDepartment(row);
         const next = DepartmentSchema.parse({
           id: current.id,
           name: input.name ?? current.name,
           description: input.description ?? current.description,
           active: input.active ?? current.active,
+          aliases: input.aliases ?? current.aliases,
+          examples: input.examples ?? current.examples,
         });
-        tx.update(departments)
-          .set({ name: next.name, description: next.description, active: next.active })
-          .where(eq(departments.id, current.id))
-          .run();
+        if (JSON.stringify(next) === JSON.stringify(current)) return current;
+        const { id: _id, ...changes } = toRow(next);
+        tx.update(departments).set(changes).where(eq(departments.id, current.id)).run();
+        recordVersion(tx);
         return next;
       });
     },
@@ -171,8 +256,24 @@ export function openTicketDatabase(filePath: string): TicketDatabase {
           .get();
         if ((used?.n ?? 0) > 0) return 'referenced' as const;
         tx.delete(departments).where(eq(departments.id, id)).run();
+        recordVersion(tx);
         return 'deleted' as const;
       });
+    },
+    taxonomyVersion() {
+      return db.select({ v: max(taxonomyVersions.version) }).from(taxonomyVersions).get()?.v ?? 0;
+    },
+    taxonomy() {
+      const history = db
+        .select({
+          version: taxonomyVersions.version,
+          createdAt: taxonomyVersions.createdAt,
+          departmentCount: taxonomyVersions.departmentCount,
+        })
+        .from(taxonomyVersions)
+        .orderBy(desc(taxonomyVersions.version))
+        .all();
+      return TaxonomyStateSchema.parse({ current: history[0]?.version ?? 0, history });
     },
     readSettings() {
       const result: Record<string, unknown> = {};
@@ -257,6 +358,8 @@ export function openTicketDatabase(filePath: string): TicketDatabase {
         confidence: parsed.confidence,
         rationale: parsed.rationale,
         status: parsed.status,
+        quote: parsed.quote,
+        taxonomyVersion: parsed.taxonomyVersion,
       };
       db.insert(decisions)
         .values(values)
@@ -267,6 +370,8 @@ export function openTicketDatabase(filePath: string): TicketDatabase {
             confidence: values.confidence,
             rationale: values.rationale,
             status: values.status,
+            quote: values.quote,
+            taxonomyVersion: values.taxonomyVersion,
           },
         })
         .run();

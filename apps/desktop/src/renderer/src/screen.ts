@@ -6,6 +6,9 @@ export interface TicketFields {
   readonly department: string | null;
   readonly confidence: number;
   readonly rationale: string;
+  /** Evidence quoted from the ticket (plain text), or null. */
+  readonly quote: string | null;
+  readonly taxonomyVersion: number;
 }
 
 /** Only `labeled` and `overridden` apply a department, even if a department id is present. */
@@ -16,6 +19,8 @@ export function ticketFields(ticket: TicketView): TicketFields {
     department: applied ? ticket.decision.departmentId : null,
     confidence: ticket.decision.confidence,
     rationale: ticket.decision.rationale,
+    quote: ticket.decision.quote,
+    taxonomyVersion: ticket.decision.taxonomyVersion,
   };
 }
 

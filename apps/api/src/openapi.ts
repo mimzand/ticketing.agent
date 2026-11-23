@@ -3,11 +3,13 @@ import {
   ClassifyTicketSchema,
   CreateDepartmentSchema,
   DeleteDepartmentResultSchema,
+  DepartmentChangesSchema,
   DepartmentIdSchema,
   DepartmentSchema,
   TicketViewSchema,
 } from '@ticket/shared';
 import { z } from 'zod';
+import { CLASSIFY_RATE_LIMIT, CORS_ALLOWED_HEADERS } from './limits.js';
 
 /** Header name shown in Swagger. Lookup in the server is case-insensitive. */
 export const API_KEY_HEADER = 'X-API-Key';
@@ -19,12 +21,8 @@ const ErrorSchema = z.strictObject({
   }),
 });
 
-/** PATCH body. The id stays in the path because decisions store it. */
-const UpdateDepartmentBodySchema = z.strictObject({
-  name: z.string().trim().min(1).max(120).optional(),
-  description: z.string().trim().max(2_000).optional(),
-  active: z.boolean().optional(),
-});
+/** PATCH body: the same Zod schema the agent applies, without the id (it stays in the path). */
+const UpdateDepartmentBodySchema = DepartmentChangesSchema;
 
 const OverrideBodySchema = z.strictObject({
   departmentId: DepartmentIdSchema,
@@ -35,6 +33,7 @@ type JsonSchema = Record<string, unknown>;
 interface ResponseSpec {
   readonly description: string;
   readonly schema?: z.ZodType;
+  readonly headers?: Readonly<Record<string, { readonly description: string; readonly schema: JsonSchema }>>;
 }
 
 interface Operation {
@@ -58,6 +57,11 @@ const notFound: ResponseSpec = { description: 'No such record.', schema: ErrorSc
 const conflict: ResponseSpec = {
   description: 'A ticket decision still references this department. Deactivate it instead.',
   schema: ErrorSchema,
+};
+const rateLimited: ResponseSpec = {
+  description: `More than ${CLASSIFY_RATE_LIMIT} classify requests in one minute for this API key. error.code is rate_limited.`,
+  schema: ErrorSchema,
+  headers: { 'Retry-After': { description: 'Seconds until a request is accepted again.', schema: { type: 'integer', minimum: 1 } } },
 };
 const badGateway: ResponseSpec = { description: 'The agent rejected the request.', schema: ErrorSchema };
 const unavailable: ResponseSpec = { description: 'The agent is not reachable.', schema: ErrorSchema };
@@ -90,11 +94,13 @@ const operations: readonly Operation[] = [
     path: '/v1/departments',
     tag: 'Departments',
     summary: 'Create a department',
+    description: 'Aliases and examples are optional. A new department records a new taxonomy version.',
     auth: true,
     body: CreateDepartmentSchema,
     responses: {
       '200': { description: 'The created department. New departments are active.', schema: DepartmentSchema },
       '400': badRequest,
+      '409': { description: 'The id exists, or an alias already belongs to another department.', schema: ErrorSchema },
       ...authedErrors,
     },
   },
@@ -103,7 +109,10 @@ const operations: readonly Operation[] = [
     path: '/v1/departments/{id}',
     tag: 'Departments',
     summary: 'Edit a department',
-    description: 'Changes name, description, or active. The id cannot change.',
+    description:
+      'Changes name, description, active, aliases, or examples. Lists replace the stored lists. The id cannot change. ' +
+      'An alias is 1–64 characters, at most 20 per department, and cannot belong to two departments (409). ' +
+      'An example is at most 300 characters, at most 20 per department. A real change records a new taxonomy version.',
     auth: true,
     params: [{ name: 'id', schema: DepartmentIdSchema, description: 'Department id. Immutable.' }],
     body: UpdateDepartmentBodySchema,
@@ -111,6 +120,7 @@ const operations: readonly Operation[] = [
       '200': { description: 'The updated department.', schema: DepartmentSchema },
       '400': badRequest,
       '404': notFound,
+      '409': { description: 'An alias already belongs to another department.', schema: ErrorSchema },
       ...authedErrors,
     },
   },
@@ -136,12 +146,17 @@ const operations: readonly Operation[] = [
     tag: 'Tickets',
     summary: 'Classify a ticket',
     description:
-      'The same externalId returns the stored decision and does not call the model again. Low confidence or an unknown department is needs_review with no department applied.',
+      'The same externalId returns the stored decision (and its quote) and does not call the model again. ' +
+      'Low confidence or an unknown department is needs_review with no department applied. ' +
+      'decision.quote is an exact substring of the subject or body (at most 240 characters) or null. ' +
+      'decision.taxonomyVersion is the department catalogue version the classify used. ' +
+      `Limited to ${CLASSIFY_RATE_LIMIT} requests per minute per API key (429 with Retry-After).`,
     auth: true,
     body: ClassifyTicketSchema,
     responses: {
       '200': { description: 'The stored ticket and its decision.', schema: TicketViewSchema },
       '400': badRequest,
+      '429': rateLimited,
       ...authedErrors,
     },
   },
@@ -193,6 +208,7 @@ export function openApiDocument(): JsonSchema {
     for (const [status, spec] of Object.entries(operation.responses)) {
       responses[status] = {
         description: spec.description,
+        ...(spec.headers && { headers: spec.headers }),
         ...(spec.schema && { content: { 'application/json': { schema: jsonSchema(spec.schema, 'output') } } }),
       };
     }
@@ -226,7 +242,8 @@ export function openApiDocument(): JsonSchema {
       description:
         'HTTP API for the local ticketing agent. The API forwards to the agent over its loopback protocol. ' +
         'The agent token and the Ollama token are never returned. Send the API key in the X-API-Key header or as a Bearer token. ' +
-        '/health, /docs, and /openapi.json are public.',
+        '/health, /docs, and /openapi.json are public and not rate limited. ' +
+        `Browsers may call it only from the origins in CORS_ORIGINS (empty by default); allowed request headers: ${CORS_ALLOWED_HEADERS.join(', ')}.`,
     },
     servers: [{ url: '/' }],
     components: {

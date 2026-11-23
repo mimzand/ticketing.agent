@@ -139,7 +139,25 @@ describe('department routes', () => {
       body: JSON.stringify({ name: 'People Ops', active: false }),
     });
     expect(patched.status).toBe(200);
-    expect(await patched.json()).toEqual({ id: 'hr', name: 'People Ops', description: 'People', active: false });
+    expect(await patched.json()).toEqual({
+      id: 'hr',
+      name: 'People Ops',
+      description: 'People',
+      active: false,
+      aliases: [],
+      examples: [],
+    });
+
+    const aliased = await call('/v1/departments/hr', {
+      method: 'PATCH',
+      body: JSON.stringify({ aliases: ['People team'], examples: ['I need a new contract'] }),
+    });
+    expect(await aliased.json()).toMatchObject({ id: 'hr', aliases: ['People team'], examples: ['I need a new contract'] });
+    const taken = await call('/v1/departments', {
+      method: 'POST',
+      body: JSON.stringify({ id: 'ops', name: 'Ops', description: '', aliases: ['people TEAM'] }),
+    });
+    expect(taken.status).toBe(409);
 
     const renamed = await call('/v1/departments/hr', { method: 'PATCH', body: JSON.stringify({ id: 'people' }) });
     expect(renamed.status).toBe(400);

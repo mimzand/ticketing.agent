@@ -49,3 +49,17 @@ describe('OpenAPI', () => {
     expect((await app.request('/v1/tickets')).status).toBe(401);
   });
 });
+
+describe('OpenAPI from the shared schemas', () => {
+  it('documents aliases, examples, the quote, the taxonomy version, and the 429', async () => {
+    const doc = JSON.stringify(await (await app.request('/openapi.json')).json());
+    const parsed = JSON.parse(doc) as {
+      paths: Record<string, Record<string, { responses: Record<string, { headers?: Record<string, unknown> }> }>>;
+    };
+    for (const word of ['"aliases"', '"examples"', '"quote"', '"taxonomyVersion"']) expect(doc).toContain(word);
+    const classify = parsed.paths['/v1/tickets:classify']?.['post'];
+    expect(Object.keys(classify?.responses ?? {})).toContain('429');
+    expect(classify?.responses['429']?.headers).toHaveProperty('Retry-After');
+    expect(parsed.paths['/health']?.['get']?.responses).not.toHaveProperty('429');
+  });
+});

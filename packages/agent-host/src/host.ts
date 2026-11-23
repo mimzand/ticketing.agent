@@ -6,12 +6,16 @@ import {
   type OllamaClient,
 } from '@ticket/model-provider';
 import {
+  acceptQuote,
+  aliasKey,
+  CreateDepartmentSchema,
   DEPARTMENT_IN_USE_MESSAGE,
   SettingsPatchSchema,
   type ClassifyTicket,
   type ConnectionTestRequest,
   type ConnectionTestResult,
-  type CreateDepartment,
+  type CreateDepartmentInput,
+  type TaxonomyState,
   type Decision,
   type DeleteDepartment,
   type DeleteDepartmentResult,
@@ -43,16 +47,36 @@ export class HostError extends Error {
   }
 }
 
-const FAILED: Decision = {
+const failed = (taxonomyVersion: number): Decision => ({
   departmentId: null,
   confidence: 0,
   rationale: 'The model could not be reached.',
   status: 'failed',
-};
+  quote: null,
+  taxonomyVersion,
+});
+
+/** Refuses an alias that another department already uses (compared case-insensitively). */
+function assertAliasesFree(db: TicketDatabase, id: string, aliases: readonly string[] | undefined): void {
+  if (!aliases || aliases.length === 0) return;
+  const taken = new Map<string, string>();
+  for (const department of db.listDepartments()) {
+    if (department.id === id) continue;
+    for (const alias of department.aliases) taken.set(aliasKey(alias), department.id);
+  }
+  for (const alias of aliases) {
+    const owner = taken.get(aliasKey(alias));
+    if (owner) {
+      throw new HostError(`The alias "${alias.trim().slice(0, 64)}" already belongs to the department ${owner}.`, 'conflict');
+    }
+  }
+}
 
 export interface AgentHost {
   listDepartments(): readonly Department[];
-  createDepartment(input: CreateDepartment): Department;
+  createDepartment(input: CreateDepartmentInput): Department;
+  /** The current taxonomy version and its history. Read only. */
+  taxonomy(): TaxonomyState;
   updateDepartment(input: UpdateDepartment): Department;
   deleteDepartment(input: DeleteDepartment): DeleteDepartmentResult;
   /**
@@ -117,13 +141,19 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
 
   return {
     listDepartments: () => db.listDepartments(),
-    createDepartment(input) {
+    createDepartment(raw) {
+      const parsed = CreateDepartmentSchema.safeParse(raw);
+      if (!parsed.success) throw new HostError(parsed.error.issues[0]?.message ?? 'Invalid department.');
+      const input = parsed.data;
       if (db.listDepartments().some((department) => department.id === input.id)) {
         throw new HostError('A department with that id already exists.', 'conflict');
       }
+      assertAliasesFree(db, input.id, input.aliases);
       return db.insertDepartment(input);
     },
+    taxonomy: () => db.taxonomy(),
     updateDepartment(input) {
+      assertAliasesFree(db, input.id, input.aliases);
       const updated = db.updateDepartment(input);
       if (!updated) throw new HostError('No department has that id.', 'not_found');
       return updated;
@@ -145,6 +175,9 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
         confidence: ticket.decision.confidence,
         rationale: ticket.decision.rationale,
         status: 'overridden',
+        // The evidence and the version the classifier used stay as they were.
+        quote: ticket.decision.quote,
+        taxonomyVersion: ticket.decision.taxonomyVersion,
       });
       const updated = db.getById(ticket.id);
       if (!updated) throw new HostError('No such ticket.', 'not_found');
@@ -251,8 +284,10 @@ async function classifyOnce(
 
   // Reuses a row left without a decision by a crash or a cancel.
   const created = db.insertTicket(input);
-  // The classifier sees only active departments.
+  // The classifier sees only active departments. The version is read with the
+  // catalogue (no await in between), so the decision records the version it used.
   const active = db.listDepartments().filter((department) => department.active);
+  const taxonomyVersion = db.taxonomyVersion();
   let decision: Decision;
   try {
     const output = await classifyTicketText({
@@ -261,13 +296,18 @@ async function classifyOnce(
       ticket: input,
       ...(signal && { signal }),
     });
+    // Only an exact active id counts; an alias or a name is not an id.
     const known = active.some((department) => department.id === output.departmentId);
+    // Kept only if it is an exact substring of this ticket; never re-asked.
+    const quote = acceptQuote(output.quote, input);
     if (!known || output.confidence < minConfidence) {
       decision = {
         departmentId: null,
         confidence: output.confidence,
         rationale: output.rationale,
         status: 'needs_review',
+        quote,
+        taxonomyVersion,
       };
     } else {
       decision = {
@@ -275,6 +315,8 @@ async function classifyOnce(
         confidence: output.confidence,
         rationale: output.rationale,
         status: 'labeled',
+        quote,
+        taxonomyVersion,
       };
     }
   } catch (error) {
@@ -282,7 +324,7 @@ async function classifyOnce(
       db.discardUndecided(created.id);
       throw cancelled();
     }
-    decision = FAILED;
+    decision = failed(taxonomyVersion);
   }
   // Cancelled after the model answered but before the save: store nothing.
   if (signal?.aborted) {

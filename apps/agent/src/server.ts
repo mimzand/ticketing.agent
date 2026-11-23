@@ -12,6 +12,7 @@ import {
   type SettingsPatch,
   type SettingsView,
   type StorageInfo,
+  type TaxonomyState,
   type TicketView,
   type TokenState,
   type UpdateDepartment,
@@ -52,6 +53,7 @@ const MAX_CONNECTIONS = 16;
 export interface AgentCalls {
   listDepartments(): readonly Department[] | Promise<readonly Department[]>;
   createDepartment(input: CreateDepartment): Department | Promise<Department>;
+  taxonomy(): TaxonomyState | Promise<TaxonomyState>;
   updateDepartment(input: UpdateDepartment): Department | Promise<Department>;
   deleteDepartment(input: DeleteDepartment): DeleteDepartmentResult | Promise<DeleteDepartmentResult>;
   /** `signal` aborts when the client cancels the request or disconnects. */
@@ -274,6 +276,8 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
             return reply(request.id, request.method, await requireCalls().override(request.params));
           case 'departments.update':
             return reply(request.id, request.method, await requireCalls().updateDepartment(request.params));
+          case 'departments.taxonomy':
+            return reply(request.id, request.method, await requireCalls().taxonomy());
           case 'departments.delete':
             return reply(request.id, request.method, await requireCalls().deleteDepartment(request.params));
           case 'settings.get':

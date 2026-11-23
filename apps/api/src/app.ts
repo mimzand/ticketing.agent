@@ -12,6 +12,12 @@ import {
   overrideTicket,
   updateDepartment,
 } from './routes.js';
+import {
+  classifyRateLimit,
+  corsAllowlist,
+  createRateLimiter,
+  type RateLimiter,
+} from './limits.js';
 import { apiKeyAuth } from './security.js';
 
 /** How long `/health` waits for the agent. */
@@ -20,6 +26,10 @@ export const HEALTH_PING_TIMEOUT_MS = 2_000;
 export interface ApiDeps {
   readonly agent: AgentLink;
   readonly apiKey: string;
+  /** CORS_ORIGINS, parsed. Empty: no browser cross-origin call is allowed. */
+  readonly corsOrigins?: readonly string[];
+  /** Tests: a limiter with a fake clock. Default: 30 classify requests per minute per key. */
+  readonly rateLimiter?: RateLimiter;
   readonly log?: (message: string) => void;
 }
 
@@ -67,7 +77,11 @@ export function createApiApp(deps: ApiDeps): Hono {
     c.header('Referrer-Policy', 'no-referrer');
     c.header('Cache-Control', 'no-store');
   });
+  // Order: CORS (answers preflights, which carry no key), the API key, then the
+  // classify rate limit, so a missing key is a 401 and never counted.
+  app.use('*', corsAllowlist(deps.corsOrigins ?? []));
   app.use('*', apiKeyAuth(deps.apiKey));
+  app.use('*', classifyRateLimit(deps.rateLimiter ?? createRateLimiter()));
 
   app.get('/health', async (c) => c.json(await readHealth(deps.agent)));
 

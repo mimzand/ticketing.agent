@@ -5,6 +5,10 @@ export const departments = sqliteTable('departments', {
   name: text('name').notNull(),
   description: text('description').notNull(),
   active: integer('active', { mode: 'boolean' }).notNull(),
+  /** JSON array of strings. Unique across departments (case-insensitive). */
+  aliases: text('aliases').notNull().default('[]'),
+  /** JSON array of strings. */
+  examples: text('examples').notNull().default('[]'),
 });
 
 export const tickets = sqliteTable('tickets', {
@@ -24,6 +28,19 @@ export const decisions = sqliteTable('decisions', {
   confidence: real('confidence').notNull(),
   rationale: text('rationale').notNull(),
   status: text('status').notNull(),
+  quote: text('quote'),
+  taxonomyVersion: integer('taxonomy_version').notNull().default(0),
+});
+
+/**
+ * One row per change to the department catalogue: a monotonic version and a JSON
+ * snapshot (id, name, description, active, aliases, examples). Never rewritten.
+ */
+export const taxonomyVersions = sqliteTable('taxonomy_versions', {
+  version: integer('version').primaryKey(),
+  createdAt: text('created_at').notNull(),
+  departmentCount: integer('department_count').notNull(),
+  snapshot: text('snapshot').notNull(),
 });
 
 /** Non-secret settings, one JSON value per key. The Ollama access token is never stored. */

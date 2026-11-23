@@ -17,6 +17,7 @@ import {
   SettingsPatchSchema,
   SettingsViewSchema,
   StorageInfoSchema,
+  TaxonomyStateSchema,
   TicketViewSchema,
   TokenStateSchema,
   UpdateDepartmentSchema,
@@ -76,6 +77,8 @@ export function createIpcHandlers(deps: IpcDeps): Record<Channel, IpcHandler> {
       DepartmentSchema.parse(await agent.request('departments.create', input(CreateDepartmentSchema, raw))),
     [IpcChannels.updateDepartment]: async (raw) =>
       DepartmentSchema.parse(await agent.request('departments.update', input(UpdateDepartmentSchema, raw))),
+    [IpcChannels.getTaxonomy]: async () =>
+      TaxonomyStateSchema.parse(await agent.request('departments.taxonomy', {})),
     [IpcChannels.deleteDepartment]: async (raw) =>
       DeleteDepartmentResultSchema.parse(
         await agent.request('departments.delete', input(DeleteDepartmentSchema, raw)),

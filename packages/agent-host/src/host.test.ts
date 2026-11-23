@@ -14,7 +14,13 @@ let chatCalls = 0;
 /** Chat requests the client hung up on before an answer (a cancel reached Ollama). */
 let hungUpChats = 0;
 /** Request bodies and headers the fake Ollama received. */
-let seen: { path: string; model: string | undefined; headers: IncomingHttpHeaders }[] = [];
+let seen: {
+  path: string;
+  model: string | undefined;
+  headers: IncomingHttpHeaders;
+  system: string;
+  user: string;
+}[] = [];
 
 afterEach(async () => {
   db?.close();
@@ -42,8 +48,17 @@ async function fakeOllama(reply: () => unknown): Promise<string> {
     req.on('data', (chunk: Buffer) => chunks.push(chunk));
     req.on('end', () => {
       const text = Buffer.concat(chunks).toString('utf8');
-      const body = text ? (JSON.parse(text) as { model?: string }) : {};
-      seen.push({ path: req.url ?? '', model: body.model, headers: req.headers });
+      const body = text
+        ? (JSON.parse(text) as { model?: string; messages?: { role: string; content: string }[] })
+        : {};
+      const message = (role: string) => body.messages?.find((m) => m.role === role)?.content ?? '';
+      seen.push({
+        path: req.url ?? '',
+        model: body.model,
+        headers: req.headers,
+        system: message('system'),
+        user: message('user'),
+      });
       if (req.url === '/api/tags') {
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(json({ models: [{ name: 'test-model', size: 1 }, { name: 'saved-model', size: 2 }] }));
@@ -143,7 +158,16 @@ describe('departments', () => {
       description: 'Invoices and refunds',
       active: false,
     });
-    expect(updated).toEqual({ id: 'billing', name: 'Accounts', description: 'Invoices and refunds', active: false });
+    expect(updated).toEqual({
+      id: 'billing',
+      name: 'Accounts',
+      description: 'Invoices and refunds',
+      active: false,
+      aliases: [],
+      examples: [],
+    });
+    // The edit is a new taxonomy version (1 was the create).
+    expect(host.taxonomy().current).toBe(2);
     expect(host.listDepartments()).toEqual([updated]);
   });
 
@@ -318,3 +342,121 @@ async function waitUntil(condition: () => boolean, timeoutMs = 20_000): Promise<
     await new Promise((r) => setTimeout(r, 20));
   }
 }
+
+describe('aliases, examples, quote, and taxonomy versions', () => {
+  const invoiceTicket = {
+    externalId: 'q-1',
+    subject: 'Invoice 18 is wrong',
+    body: 'The total on invoice 18 is twice the agreed price.',
+    channel: 'email',
+  };
+
+  it('the instruction lists aliases and examples; the ticket stays in the user message', async () => {
+    const host = hostFor(await fakeOllama(() => ({ departmentId: 'billing', confidence: 0.9, rationale: 'Invoice.' })));
+    host.updateDepartment({ id: 'billing', aliases: ['Accounts payable'], examples: ['My invoice total is wrong'] });
+    await host.classify(invoiceTicket);
+    const chat = seen.find((r) => r.path === '/api/chat');
+    expect(chat?.system).toContain('"Accounts payable"');
+    expect(chat?.system).toContain('"My invoice total is wrong"');
+    expect(chat?.system).not.toContain('twice the agreed price');
+    expect(chat?.user).toContain('twice the agreed price');
+  }, 30_000);
+
+  it('stores a quote that is an exact substring of the ticket', async () => {
+    const host = hostFor(
+      await fakeOllama(() => ({ departmentId: 'billing', confidence: 0.9, rationale: 'Invoice.', quote: 'twice the agreed price' })),
+    );
+    const view = await host.classify(invoiceTicket);
+    expect(view.decision).toMatchObject({ status: 'labeled', departmentId: 'billing', quote: 'twice the agreed price' });
+    expect(host.listTickets()[0]?.decision.quote).toBe('twice the agreed price');
+  }, 30_000);
+
+  it('stores null for a quote that is not in the ticket, without asking the model again', async () => {
+    const host = hostFor(
+      await fakeOllama(() => ({ departmentId: 'billing', confidence: 0.9, rationale: 'Invoice.', quote: 'three times the price' })),
+    );
+    const view = await host.classify(invoiceTicket);
+    expect(view.decision.quote).toBeNull();
+    expect(chatCalls).toBe(1);
+  }, 30_000);
+
+  it('stores null for a quote longer than 240 characters even if it is in the ticket', async () => {
+    const long = 'x'.repeat(241);
+    const host = hostFor(
+      await fakeOllama(() => ({ departmentId: 'billing', confidence: 0.9, rationale: 'Invoice.', quote: long })),
+    );
+    const view = await host.classify({ ...invoiceTicket, body: long });
+    expect(view.decision.quote).toBeNull();
+  }, 30_000);
+
+  it('needs_review still has a null department, with or without a quote', async () => {
+    const host = hostFor(
+      await fakeOllama(() => ({ departmentId: 'billing', confidence: 0.3, rationale: 'Unsure.', quote: 'Invoice 18' })),
+    );
+    const view = await host.classify(invoiceTicket);
+    expect(view.decision).toMatchObject({ status: 'needs_review', departmentId: null, quote: 'Invoice 18' });
+  }, 30_000);
+
+  it('an alias is not an id', async () => {
+    const host = hostFor(await fakeOllama(() => ({ departmentId: 'Accounts payable', confidence: 0.99, rationale: 'Alias.' })));
+    host.updateDepartment({ id: 'billing', aliases: ['Accounts payable'] });
+    const view = await host.classify(invoiceTicket);
+    expect(view.decision).toMatchObject({ status: 'needs_review', departmentId: null });
+  }, 30_000);
+
+  it('a department edit increments the version and the decision stores the version it used', async () => {
+    const host = hostFor(
+      await fakeOllama(() => ({ departmentId: 'billing', confidence: 0.9, rationale: 'Invoice.', quote: 'Invoice 18' })),
+    );
+    expect(host.taxonomy().current).toBe(1); // hostWith created billing
+    const first = await host.classify(invoiceTicket);
+    expect(first.decision.taxonomyVersion).toBe(1);
+
+    host.updateDepartment({ id: 'billing', examples: ['Refund my order'] });
+    expect(host.taxonomy().current).toBe(2);
+    const second = await host.classify({ ...invoiceTicket, externalId: 'q-2' });
+    expect(second.decision.taxonomyVersion).toBe(2);
+    // Old decisions are not rewritten.
+    expect(host.listTickets().find((t) => t.externalId === 'q-1')?.decision.taxonomyVersion).toBe(1);
+    expect(host.taxonomy().history.map((v) => v.version)).toEqual([2, 1]);
+  }, 30_000);
+
+  it('a repeated externalId returns the stored quote and does not call the model', async () => {
+    const host = hostFor(
+      await fakeOllama(() => ({ departmentId: 'billing', confidence: 0.9, rationale: 'Invoice.', quote: 'Invoice 18' })),
+    );
+    const first = await host.classify(invoiceTicket);
+    const calls = chatCalls;
+    host.updateDepartment({ id: 'billing', name: 'Accounts' });
+    const again = await host.classify({ ...invoiceTicket, subject: 'Something else' });
+    expect(chatCalls).toBe(calls);
+    expect(again.decision).toEqual(first.decision);
+  }, 30_000);
+
+  it('with no department the version stays 0 and classify does not invent one', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'ticket-host-'));
+    db = openTicketDatabase(join(dir, 'tickets.db'));
+    const url = await fakeOllama(() => ({ departmentId: 'billing', confidence: 0.9, rationale: 'Guess.' }));
+    const host = createAgentHost({ db, env: { OLLAMA_HOST: url, OLLAMA_MODEL: 'test-model' } });
+    const view = await host.classify(invoiceTicket);
+    expect(view.decision).toMatchObject({ status: 'needs_review', departmentId: null, taxonomyVersion: 0 });
+    expect(host.taxonomy()).toEqual({ current: 0, history: [] });
+  }, 30_000);
+
+  it('refuses an alias another department already has, and limits the lists', () => {
+    const host = hostWith({});
+    host.updateDepartment({ id: 'billing', aliases: ['Invoices'] });
+    expect(() => host.createDepartment({ id: 'finance', name: 'Finance', description: '', aliases: ['invoices'] })).toThrow(
+      /already belongs to the department billing/,
+    );
+    expect(() =>
+      host.createDepartment({
+        id: 'finance',
+        name: 'Finance',
+        description: '',
+        aliases: Array.from({ length: 21 }, (_, i) => `a${i}`),
+      }),
+    ).toThrow(/At most 20 aliases/);
+    expect(host.taxonomy().current).toBe(2);
+  });
+});

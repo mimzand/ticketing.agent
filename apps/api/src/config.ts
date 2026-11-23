@@ -1,4 +1,5 @@
 import { resolve } from 'node:path';
+import { parseCorsOrigins } from './limits.js';
 import { resolveApiKey } from './security.js';
 
 export interface ApiConfig {
@@ -8,6 +9,8 @@ export interface ApiConfig {
   readonly apiKey: string;
   /** True when this process generated the key because API_KEY was unset. */
   readonly apiKeyGenerated: boolean;
+  /** CORS_ORIGINS: exact origins allowed to call from a browser. Default: none. */
+  readonly corsOrigins: readonly string[];
 }
 
 export const DEFAULT_API_HOST = '127.0.0.1';
@@ -23,7 +26,7 @@ export const DEFAULT_AGENT_STATE_FILE = resolve(
   'agent-state.json',
 );
 
-/** API_HOST, API_PORT, AGENT_STATE_FILE. */
+/** API_HOST, API_PORT, AGENT_STATE_FILE, API_KEY, CORS_ORIGINS. */
 export function readApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
   const rawPort = env['API_PORT']?.trim();
   const port = rawPort ? Number(rawPort) : DEFAULT_API_PORT;
@@ -39,5 +42,6 @@ export function readApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
     agentStateFile: stateFile ? resolve(stateFile) : DEFAULT_AGENT_STATE_FILE,
     apiKey: apiKey.key,
     apiKeyGenerated: apiKey.generated,
+    corsOrigins: parseCorsOrigins(env['CORS_ORIGINS']),
   };
 }

@@ -98,8 +98,11 @@ The first message on a connection is `system.hello` (protocol name, version, tok
 | `system.ping` | liveness: pid, version, protocol version |
 | `model.health` | whether Ollama is reachable, and the configured model name |
 | `departments.list` | every department |
-| `departments.create` | `id`, `name`, `description` |
-| `tickets.classify` | store the ticket and return the decision; the same `externalId` returns the stored decision |
+| `departments.create` | `id`, `name`, `description`, optional `aliases` and `examples`; a new taxonomy version |
+| `departments.update` | name, description, active, aliases, examples; the id never changes; a new taxonomy version |
+| `departments.delete` | refused while a decision references the id; a new taxonomy version |
+| `departments.taxonomy` | the current taxonomy version and its read-only history (version, time, department count) |
+| `tickets.classify` | store the ticket and return the decision with its quote and taxonomy version; the same `externalId` returns the stored decision |
 | `tickets.list` | the 50 most recent tickets |
 | `tickets.override` | an active department only; status becomes `overridden` |
 
@@ -107,15 +110,17 @@ Every request and response is validated with Zod. Ticket text is untrusted data 
 
 ## Classifier
 
-Departments: `id`, `name`, `description`, `active`.
+Departments: `id` (immutable), `name`, `description`, `active`, `aliases`, `examples`. An alias is a short label (1–64 characters, at most 20 per department); the same alias (compared trimmed and case-insensitively) cannot belong to two departments, and an alias is never an id. An example is a short sample of ticket text (at most 300 characters, at most 20 per department).
+
+Taxonomy versions: every change to a department, its aliases, or its examples (create, a real edit, remove) increments one monotonic version and stores a snapshot of the catalogue (`id`, `name`, `description`, `active`, `aliases`, `examples`) in the same transaction. The version is 0 until the first department exists; classify never invents one. History is read only: no rollback, and old decisions are never rewritten. A database from before versions that already has departments gets a baseline version 1; its older decisions keep version 0.
 
 Tickets: `id`, unique `externalId`, `subject`, `body`, `channel`, `createdAt`.
 
-Decision: `departmentId` or null, `confidence` (0–1), `rationale`, `status` (`labeled` | `needs_review` | `overridden` | `failed`). Threshold `CLASSIFY_MIN_CONFIDENCE`, default `0.7`. An unknown department or low confidence becomes `needs_review` with no applied label.
+Decision: `departmentId` or null, `confidence` (0–1), `rationale`, `status` (`labeled` | `needs_review` | `overridden` | `failed`), `quote` (evidence, or null), and `taxonomyVersion` (the catalogue version the classify used). Threshold `CLASSIFY_MIN_CONFIDENCE`, default `0.7`. An unknown department or low confidence becomes `needs_review` with no applied label.
 
 SQLite file: `TICKET_DATA_DIR` (default `apps/agent/.data/tickets.db`). `@ticket/storage` applies Drizzle migrations when the agent opens the database. Gitignore `.data`. Electron and the API never open this file.
 
-`createAgentHost` builds one `LlmAgent`. Its `outputSchema` is `departmentId`, `confidence`, `rationale`. After the model returns, code in the host accepts only an active department id and a confidence at or above the threshold. Otherwise the status is `needs_review` and no label is applied. Network or model errors are status `failed`. The decision is persisted. The same `externalId` does not call the model again.
+`createAgentHost` builds one `LlmAgent`. Its system instruction lists each active department's id, name, description, aliases, and examples (operator text JSON-quoted, passed as an instruction provider so ADK does not treat `{…}` as state placeholders). Ticket text is only the user message. Its `outputSchema` is `departmentId`, `confidence`, `rationale`, `quote`. After the model returns, code in the host accepts only an exact active department id (not an alias, not a name) and a confidence at or above the threshold. Otherwise the status is `needs_review` and no label is applied. The quote is kept only when it is an exact substring of that ticket's subject or body and at most 240 characters; otherwise it is stored as null, and the model is not asked again. Network or model errors are status `failed`. The decision is persisted with its quote and taxonomy version. The same `externalId` returns the stored decision, quote included, and does not call the model again.
 
 Model: company Ollama only (`OLLAMA_HOST`, `OLLAMA_MODEL`). Construct `new OllamaLlm(...)` from `@ticket/adk-runtime`, backed by `@ticket/model-provider`. No Gemini model name, no OpenAI, no cloud LLM, no web search.
 
@@ -137,6 +142,10 @@ Hono on `127.0.0.1:8787` (`API_HOST`, `API_PORT`). Each route forwards to the me
 | `POST` | `/v1/tickets/{id}/override` | API key |
 
 `X-API-Key` or `Authorization: Bearer`, compared in constant time on a digest, as in `apps/api/src/security.ts`. On loopback, generate a key for the API process when `API_KEY` is unset and print it once. Responses never include the agent token or the Ollama token.
+
+CORS (HTTP API only): `CORS_ORIGINS` is a comma-separated allow-list of exact origins, default empty, which allows no browser cross-origin call. `*` is refused at startup. A listed `Origin` gets exactly that origin in `Access-Control-Allow-Origin`; an unlisted one gets no CORS header, never a reflection. Allowed request headers: `Content-Type`, `X-API-Key`, `Authorization`. Preflights are answered before the API-key check.
+
+Rate limit (HTTP API only): `POST /v1/tickets:classify` is limited to 30 requests per minute per API key, in memory, for this process. The limit runs after the API-key check, so a missing or wrong key is a 401 and is not counted. Over the limit: 429, `{ "error": { "code": "rate_limited", "message": "..." } }`, and `Retry-After`. `/health`, `/docs`, `/openapi.json`, and the other routes are not limited. The desktop protocol has neither CORS nor this limit.
 
 `GET /health` returns `{ "ok": true, "service": "ticket-api", "agent": "connected" | "unavailable", "ollama": "reachable" | "unreachable", "model": "<name, or empty>" }`. The API learns that the agent is up by `system.ping`, then asks `model.health`. `model` is empty when the agent cannot be asked.
 
@@ -169,11 +178,11 @@ The main process reads `AGENT_STATE_FILE`, connects with `@ticket/agent-client` 
 
 ## Out of v1
 
-Research, chat, a tools package, the legacy runtime, an engine flag, an in-process agent mode, reverse calls into the shell, code execution, `dockerode`, rate limits, CORS lists, pagination, idempotency-key conflicts, a second UI package. Do not build these unless a prompt asks for them. OpenAPI/Swagger, `safeStorage` for the Ollama token, and the Electron utility-process supervisor are in.
+Research, chat, a tools package, the legacy runtime, an engine flag, an in-process agent mode, reverse calls into the shell, code execution, `dockerode`, pagination, idempotency-key conflicts, a second UI package. Do not build these unless a prompt asks for them. OpenAPI/Swagger, `safeStorage` for the Ollama token, the Electron utility-process supervisor, department aliases and examples, evidence quotes, taxonomy versions, and the HTTP API's CORS allow-list and classify rate limit are in.
 
 ## Later
 
-Evidence quotes, department examples and aliases, taxonomy versions, rate limit, CORS.
+Nothing is scheduled.
 
 ---
 

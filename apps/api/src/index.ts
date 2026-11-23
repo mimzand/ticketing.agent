@@ -7,3 +7,13 @@ export {
   readApiConfig,
   type ApiConfig,
 } from './config.js';
+export {
+  CLASSIFY_RATE_LIMIT,
+  CLASSIFY_RATE_WINDOW_MS,
+  CORS_ALLOWED_HEADERS,
+  classifyRateLimit,
+  corsAllowlist,
+  createRateLimiter,
+  parseCorsOrigins,
+  type RateLimiter,
+} from './limits.js';

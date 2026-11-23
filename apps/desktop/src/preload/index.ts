@@ -14,6 +14,7 @@ import {
   OverrideTicketSchema,
   RENDERER_API_KEY,
   StorageInfoSchema,
+  TaxonomyStateSchema,
   TicketViewSchema,
   TokenStateSchema,
   type RendererApi,
@@ -48,6 +49,7 @@ const api: RendererApi = {
     ),
   updateDepartment: async (input) =>
     DepartmentSchema.parse(await ipcRenderer.invoke(IpcChannels.updateDepartment, input)),
+  getTaxonomy: async () => TaxonomyStateSchema.parse(await ipcRenderer.invoke(IpcChannels.getTaxonomy)),
   deleteDepartment: async (input) =>
     DeleteDepartmentResultSchema.parse(await ipcRenderer.invoke(IpcChannels.deleteDepartment, input)),
   classifyTicket: async (input) =>

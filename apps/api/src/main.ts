@@ -17,10 +17,15 @@ const agent = createAgentLink({
 });
 
 const server = serve(
-  { fetch: createApiApp({ agent, apiKey: config.apiKey, log }).fetch, hostname: config.host, port: config.port },
+  { fetch: createApiApp({ agent, apiKey: config.apiKey, corsOrigins: config.corsOrigins, log }).fetch, hostname: config.host, port: config.port },
   (info) => {
     log(`Listening on http://${config.host}:${info.port}`);
     log(`Agent state file: ${config.agentStateFile}`);
+    log(
+      config.corsOrigins.length > 0
+        ? `CORS allowed for: ${config.corsOrigins.join(', ')}`
+        : 'CORS: no browser origin is allowed (CORS_ORIGINS is empty).',
+    );
   },
 );
 server.once('error', (error: NodeJS.ErrnoException) => {

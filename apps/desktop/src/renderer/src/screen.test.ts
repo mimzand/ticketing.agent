@@ -11,13 +11,19 @@ const base = {
   createdAt: '2026-01-01T00:00:00.000Z',
 } as const;
 
-const departments: Department[] = [{ id: 'billing', name: 'Billing', description: '', active: true }];
+const departments: Department[] = [
+  { id: 'billing', name: 'Billing', description: '', active: true, aliases: [], examples: [] },
+];
 const date = () => 'Jan 1';
 
-function ticket(status: TicketView['decision']['status'], departmentId: string | null): TicketView {
+function ticket(
+  status: TicketView['decision']['status'],
+  departmentId: string | null,
+  quote: string | null = null,
+): TicketView {
   return {
     ...base,
-    decision: { status, departmentId, confidence: 0.91, rationale: 'Invoice wording.' },
+    decision: { status, departmentId, confidence: 0.91, rationale: 'Invoice wording.', quote, taxonomyVersion: 3 },
   };
 }
 
@@ -28,7 +34,15 @@ describe('ticketFields', () => {
       department: 'billing',
       confidence: 0.91,
       rationale: 'Invoice wording.',
+      quote: null,
+      taxonomyVersion: 3,
     });
+  });
+
+  it('shows a stored quote as plain text, for labeled and needs_review alike', () => {
+    expect(ticketFields(ticket('labeled', 'billing', 'Please review.')).quote).toBe('Please review.');
+    const review = ticketFields(ticket('needs_review', 'billing', 'Please review.'));
+    expect(review).toMatchObject({ department: null, quote: 'Please review.' });
   });
 
   it('applies no department for needs_review or failed, even with a department id present', () => {

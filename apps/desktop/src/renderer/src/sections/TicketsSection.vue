@@ -237,11 +237,23 @@ onMounted(load);
           <dd>{{ selected.channel }}</dd>
           <dt>Created</dt>
           <dd>{{ selectedRow.created }}</dd>
+          <dt>Taxonomy</dt>
+          <dd data-testid="ticket-taxonomy">{{ selectedFields.taxonomyVersion > 0 ? `v${selectedFields.taxonomyVersion}` : '—' }}</dd>
         </dl>
         <h3>Body</h3>
         <p class="plain body">{{ selected.body || '(empty)' }}</p>
-        <h3>Rationale</h3>
-        <p class="plain">{{ selectedFields.rationale || '(none)' }}</p>
+        <div class="why">
+          <div>
+            <h3>Rationale</h3>
+            <p class="plain">{{ selectedFields.rationale || '(none)' }}</p>
+          </div>
+          <div>
+            <h3>Evidence</h3>
+            <!-- Plain text: an exact passage from this ticket, checked by the agent. -->
+            <blockquote v-if="selectedFields.quote" class="plain quote" data-testid="ticket-quote">{{ selectedFields.quote }}</blockquote>
+            <p v-else class="muted">No quote.</p>
+          </div>
+        </div>
 
         <form class="override" @submit.prevent="override">
           <label class="field">
@@ -359,6 +371,20 @@ dt {
 }
 dd {
   margin: 0;
+}
+.why {
+  display: grid;
+  gap: 10px;
+}
+.why h3 {
+  margin-bottom: 4px;
+}
+.quote {
+  margin: 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--accent);
+  background: var(--surface-2);
+  border-radius: 0 6px 6px 0;
 }
 .override {
   display: grid;

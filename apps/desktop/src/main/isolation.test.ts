@@ -79,6 +79,7 @@ describe('preload', () => {
       'listDepartments',
       'createDepartment',
       'updateDepartment',
+      'getTaxonomy',
       'deleteDepartment',
       'classifyTicket',
       'cancelClassify',

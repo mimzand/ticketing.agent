@@ -12,7 +12,8 @@ import {
   type CancelClassify,
   type CancelClassifyResult,
   type ClassifyTicket,
-  type CreateDepartment,
+  type CreateDepartmentInput,
+  type TaxonomyState,
   type DeleteDepartment,
   type DeleteDepartmentResult,
   type Department,
@@ -31,6 +32,7 @@ export const IpcChannels = {
   createDepartment: 'departments:create',
   updateDepartment: 'departments:update',
   deleteDepartment: 'departments:delete',
+  getTaxonomy: 'departments:taxonomy',
   classifyTicket: 'tickets:classify',
   cancelClassify: 'tickets:cancel-classify',
   listTickets: 'tickets:list',
@@ -59,9 +61,11 @@ export interface RendererApi {
   /** Supervisor state changes (started, attached, reconnecting…). Returns an unsubscribe function. */
   onAgentStatus(listener: (status: AgentStatusEvent) => void): () => void;
   listDepartments(): Promise<readonly Department[]>;
-  createDepartment(input: CreateDepartment): Promise<Department>;
+  createDepartment(input: CreateDepartmentInput): Promise<Department>;
   updateDepartment(input: UpdateDepartment): Promise<Department>;
   deleteDepartment(input: DeleteDepartment): Promise<DeleteDepartmentResult>;
+  /** The current taxonomy version and its read-only history. */
+  getTaxonomy(): Promise<TaxonomyState>;
   classifyTicket(input: ClassifyTicket): Promise<TicketView>;
   /**
    * Cancels the in-flight submit of this externalId. The pending `classifyTicket` then
