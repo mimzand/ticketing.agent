@@ -10,6 +10,7 @@ import {
   listDepartments,
   listTickets,
   mergeSenders,
+  overrideFeedback,
   overrideTicket,
   updateDepartment,
 } from './routes.js';
@@ -108,6 +109,10 @@ export function createApiApp(deps: ApiDeps): Hono {
   });
   app.post('/v1/senders:merge', async (c) => {
     const result = await mergeSenders(c, deps.agent);
+    return c.json(result.body, result.status);
+  });
+  app.get('/v1/tickets:override-feedback', async (c) => {
+    const result = await overrideFeedback(deps.agent);
     return c.json(result.body, result.status);
   });
   app.get('/v1/tickets', async (c) => {

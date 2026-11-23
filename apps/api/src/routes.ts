@@ -12,6 +12,7 @@ import {
   MergeSendersSchema,
   UpdateDepartmentSchema,
   OverrideTicketSchema,
+  OverrideFeedbackSchema,
   TicketViewSchema,
 } from '@ticket/shared';
 import { type Context } from 'hono';
@@ -99,6 +100,11 @@ export async function classifyTicket(c: Context, agent: AgentLink): Promise<Json
 
 export async function listTickets(agent: AgentLink): Promise<JsonResult> {
   return forward(async () => TicketViewSchema.array().parse(await agent.request('tickets.list', {})));
+}
+
+/** Read-only override feedback export (no email). */
+export async function overrideFeedback(agent: AgentLink): Promise<JsonResult> {
+  return forward(async () => OverrideFeedbackSchema.parse(await agent.request('tickets.overrideFeedback', {})));
 }
 
 export async function overrideTicket(c: Context, agent: AgentLink, id: string): Promise<JsonResult> {

@@ -53,6 +53,8 @@ const CROSS_WORKSPACE = ban('Do not import another workspace by path; use its pa
 const PHASE2 = ['@ticket/storage', '@ticket/model-provider', '@ticket/adk-runtime', '@ticket/agent-host'];
 const SQLITE_AND_ADK = ['better-sqlite3', 'drizzle-orm', 'drizzle-orm/*', '@google/adk', '@google/adk/*'];
 const APPS = ['@ticket/agent', '@ticket/api', '@ticket/desktop'];
+/** Eval tooling sits on top of the host; no package or app imports it. */
+const NO_EVAL = ban('@ticket/eval is a dev tool: no package or app imports it.', ['@ticket/eval']);
 
 /**
  * One no-restricted-imports rule for a set of files.
@@ -66,7 +68,7 @@ const boundary = (files, spec, ignores) => ({
   rules: {
     'no-restricted-imports': [
       'error',
-      { paths: spec.paths ?? [], patterns: [DEEP_IMPORT, ...(spec.patterns ?? [])] },
+      { paths: spec.paths ?? [], patterns: [DEEP_IMPORT, NO_EVAL, ...(spec.patterns ?? [])] },
     ],
   },
 });
@@ -203,6 +205,23 @@ export default defineConfig(
       ban('@ticket/agent-host does not import ADK, SQLite, the protocol, or an app.', [
         '@ticket/agent-protocol',
         '@ticket/agent-client',
+        ...APPS,
+        ...SQLITE_AND_ADK,
+      ]),
+      CROSS_WORKSPACE,
+    ],
+  }),
+
+  // @ticket/eval: drives createAgentHost with a fake Ollama. It may use the host, storage
+  // (to open a temp database), and shared; never ADK, SQLite directly, the protocol, or an app.
+  boundary(['packages/eval/src/**/*.ts'], {
+    paths: [ELECTRON('@ticket/eval never imports electron.')],
+    patterns: [
+      ban('@ticket/eval uses only @ticket/agent-host, @ticket/storage, and @ticket/shared.', [
+        '@ticket/agent-protocol',
+        '@ticket/agent-client',
+        '@ticket/adk-runtime',
+        '@ticket/model-provider',
         ...APPS,
         ...SQLITE_AND_ADK,
       ]),

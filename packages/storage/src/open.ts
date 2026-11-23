@@ -13,14 +13,16 @@ import {
   TaxonomyStateSchema,
   normalizeEmail,
   PriorTicketSchema,
+  OverrideFeedbackItemSchema,
   SENDER_HISTORY_LIMIT,
   type PriorTicket,
+  type OverrideFeedbackItem,
   type TaxonomyState,
   type TicketView,
   type UpdateDepartment,
 } from '@ticket/shared';
 import BetterSqlite3 from 'better-sqlite3';
-import { and, count, desc, eq, lt, max, ne } from 'drizzle-orm';
+import { and, count, desc, eq, isNotNull, lt, max, ne } from 'drizzle-orm';
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { existsSync, mkdirSync } from 'node:fs';
@@ -93,6 +95,12 @@ export interface TicketDatabase {
    * ticket has no decision.
    */
   overrideDecision(ticketId: string, departmentId: string): boolean;
+  /**
+   * Decided tickets whose first override replaced a classifier department
+   * (`replaced_department_id` not null), newest first, at most `limit`. No sender:
+   * the email is never part of these rows.
+   */
+  overrideFeedback(limit: number): OverrideFeedbackItem[];
   getById(id: string): TicketView | null;
   listRecent(): readonly TicketView[];
   close(): void;
@@ -487,6 +495,31 @@ export function openTicketDatabase(filePath: string): TicketDatabase {
           .run();
         return true;
       });
+    },
+    overrideFeedback(limit) {
+      return db
+        .select({
+          ticketId: tickets.id,
+          externalId: tickets.externalId,
+          subject: tickets.subject,
+          body: tickets.body,
+          channel: tickets.channel,
+          createdAt: tickets.createdAt,
+          replacedDepartmentId: decisions.replacedDepartmentId,
+          departmentId: decisions.departmentId,
+          status: decisions.status,
+          confidence: decisions.confidence,
+          rationale: decisions.rationale,
+          quote: decisions.quote,
+          taxonomyVersion: decisions.taxonomyVersion,
+        })
+        .from(tickets)
+        .innerJoin(decisions, eq(decisions.ticketId, tickets.id))
+        .where(and(isNotNull(decisions.replacedDepartmentId), isNotNull(decisions.departmentId)))
+        .orderBy(desc(tickets.createdAt))
+        .limit(limit)
+        .all()
+        .map((row) => OverrideFeedbackItemSchema.parse(row));
     },
     getById(id) {
       const row = ticketQuery(db).where(eq(tickets.id, id)).get();

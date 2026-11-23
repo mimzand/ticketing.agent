@@ -46,6 +46,11 @@ describe('ESLint boundaries', () => {
     ['packages/agent-host/src/x.ts', "import '@google/adk';", 'ADK outside adk-runtime'],
     ['packages/model-provider/src/x.ts', "import '@ticket/adk-runtime';", 'the provider depending on ADK'],
     ['apps/agent/src/x.ts', "import '@google/adk';", 'the agent importing ADK directly'],
+    ['packages/eval/src/x.ts', "import '@google/adk';", 'ADK in the eval tooling'],
+    ['packages/eval/src/x.ts', "import 'better-sqlite3';", 'SQLite directly in the eval tooling'],
+    ['packages/eval/src/x.ts', "import '@ticket/agent-client';", 'the eval tooling talking to a live agent'],
+    ['packages/agent-host/src/x.ts', "import '@ticket/eval';", 'the host importing the eval tooling'],
+    ['apps/api/src/x.ts', "import '@ticket/eval';", 'an app importing the eval tooling'],
   ])('rejects %s: %s (%s)', async (file, code) => {
     expect(await restricted(file, code)).toBe(true);
   });
@@ -65,6 +70,8 @@ describe('ESLint boundaries', () => {
     ['packages/agent-host/src/x.ts', "import '@ticket/adk-runtime';"],
     ['packages/agent-host/src/x.ts', "import '@ticket/storage';"],
     ['apps/agent/src/x.ts', "import '@ticket/agent-host';"],
+    ['packages/eval/src/x.ts', "import '@ticket/agent-host';"],
+    ['packages/eval/src/x.ts', "import '@ticket/storage';"],
   ])('allows %s: %s', async (file, code) => {
     expect(await restricted(file, code)).toBe(false);
   });

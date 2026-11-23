@@ -706,3 +706,53 @@ describe('sender memory: operator corrections and the summary', () => {
     expect(again).toEqual(overridden);
   }, 30_000);
 });
+
+describe('override feedback export', () => {
+  const answer = { departmentId: 'billing', confidence: 0.9, rationale: 'Invoice.', quote: 'Invoice 18' };
+
+  it('lists an override that replaced a classifier department, with both ids and no email', async () => {
+    let reply: unknown = answer;
+    const host = hostFor(await fakeOllama(() => reply));
+    host.createDepartment({ id: 'it', name: 'IT', description: 'Computers' });
+    const labeled = await host.classify({
+      externalId: 'f-1',
+      subject: 'Invoice 18 for the laptop',
+      body: 'The laptop screen is dark.',
+      channel: 'email',
+      email: 'Ann@Example.com',
+    });
+    host.override({ id: labeled.id, departmentId: 'it' });
+    // Not exported: never overridden, or overridden from no classifier department.
+    await host.classify({ externalId: 'f-2', subject: 'Invoice 19', body: 'x', channel: 'email', email: 'ann@example.com' });
+    reply = { departmentId: 'billing', confidence: 0.2, rationale: 'Unsure.' };
+    const unsure = await host.classify({ externalId: 'f-3', subject: 'Hello', body: 'x', channel: 'chat', email: 'ann@example.com' });
+    host.override({ id: unsure.id, departmentId: 'it' });
+
+    const feedback = host.overrideFeedback();
+    expect(feedback.taxonomyVersion).toBe(host.taxonomy().current);
+    expect(feedback.departments.map((d) => d.id)).toEqual(['billing', 'it']);
+    expect(feedback.items).toEqual([
+      {
+        ticketId: labeled.id,
+        externalId: 'f-1',
+        subject: 'Invoice 18 for the laptop',
+        body: 'The laptop screen is dark.',
+        channel: 'email',
+        createdAt: labeled.createdAt,
+        replacedDepartmentId: 'billing',
+        departmentId: 'it',
+        status: 'overridden',
+        confidence: 0.9,
+        rationale: 'Invoice.',
+        quote: 'Invoice 18',
+        taxonomyVersion: labeled.decision.taxonomyVersion,
+      },
+    ]);
+    const serialized = JSON.stringify(feedback);
+    expect(serialized).not.toMatch(/example\.com/i);
+    expect(serialized).not.toContain('"email":');
+    expect(serialized).not.toMatch(/ann@/i);
+    // Read only: the catalogue is unchanged.
+    expect(host.listDepartments().find((d) => d.id === 'it')?.examples).toEqual([]);
+  }, 30_000);
+});

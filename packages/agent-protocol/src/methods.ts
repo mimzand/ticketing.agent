@@ -21,6 +21,7 @@ import {
   DepartmentSchema,
   ModelHealthSchema,
   OverrideTicketSchema,
+  OverrideFeedbackSchema,
   TicketViewSchema,
   err,
   ok,
@@ -58,6 +59,8 @@ export const PROTOCOL_METHODS = {
   'tickets.list': { params: NoParamsSchema, result: z.array(TicketViewSchema) },
   'tickets.override': { params: OverrideTicketSchema, result: TicketViewSchema },
   'tickets.context': { params: TicketContextRequestSchema, result: TicketContextSchema },
+  /** Read only: overrides that replaced a classifier department, and the catalogue. No email. */
+  'tickets.overrideFeedback': { params: NoParamsSchema, result: OverrideFeedbackSchema },
   'senders.merge': { params: MergeSendersSchema, result: MergeSendersResultSchema },
   'settings.get': { params: NoParamsSchema, result: SettingsViewSchema },
   'settings.update': { params: SettingsPatchSchema, result: SettingsViewSchema },

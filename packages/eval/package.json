@@ -1,0 +1,29 @@
+{
+  "name": "@ticket/eval",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Golden eval suite and override feedback tooling. Runs the real createAgentHost path against a fake, in-process Ollama. Never imported by the apps.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "eval": "tsx src/cli.ts run",
+    "feedback": "tsx src/cli.ts feedback",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ticket/agent-host": "workspace:*",
+    "@ticket/shared": "workspace:*",
+    "@ticket/storage": "workspace:*",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "tsx": "4.23.15"
+  }
+}

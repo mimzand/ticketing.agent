@@ -85,6 +85,7 @@ A classify is cancellable end to end: the shell aborts its request, the client s
 - `apps/agent` calls `createAgentHost` and serves the protocol. It never imports `electron`.
 - `apps/api` depends on `@ticket/shared` and `@ticket/agent-client` only. It never opens SQLite and never imports `@google/adk`.
 - `apps/desktop` main may use `@ticket/agent-client`. Its preload and renderer may use `@ticket/shared` only. Only `apps/desktop` may import `electron`.
+- `@ticket/eval` is a dev tool on top of `@ticket/agent-host`: it may use the host, `@ticket/storage` (a temp database per case), and `@ticket/shared`, and drives `createAgentHost` with a fake, in-process Ollama. It never imports ADK, SQLite directly, the protocol, the client, or an app, and nothing imports it. See `docs/eval.md`.
 - Enforce these boundaries with ESLint `no-restricted-imports`.
 
 There is no `HostPorts` reverse call in v1. The pattern source uses reverse calls for dialogs, `openExternal`, and `safeStorage`. This product does not ask the shell for those.
@@ -107,6 +108,7 @@ The first message on a connection is `system.hello` (protocol name, version, tok
 | `tickets.context` | a ticket's sender email (or null), that sender's earlier decided tickets, and their numeric summary |
 | `senders.merge` | operator merge: every ticket of `from` moves onto `into`; decisions are not changed |
 | `tickets.override` | an active department only; status becomes `overridden` |
+| `tickets.overrideFeedback` | read only: decided tickets whose first override replaced a classifier department (`replacedDepartmentId` and the operator `departmentId`, ticket text, confidence, rationale, quote, taxonomy version), newest first, at most 500, with the current catalogue. No email. Changes nothing |
 
 Every request and response is validated with Zod. Ticket text is untrusted data in the user message, not in the system instruction.
 
@@ -151,6 +153,7 @@ Hono on `127.0.0.1:8787` (`API_HOST`, `API_PORT`). Each route forwards to the me
 | `GET` | `/v1/tickets` | API key |
 | `POST` | `/v1/tickets/{id}/override` | API key |
 | `POST` | `/v1/senders:merge` | API key |
+| `GET` | `/v1/tickets:override-feedback` | API key |
 
 `X-API-Key` or `Authorization: Bearer`, compared in constant time on a digest, as in `apps/api/src/security.ts`. On loopback, generate a key for the API process when `API_KEY` is unset and print it once. Responses never include the agent token or the Ollama token.
 
@@ -173,6 +176,7 @@ The main process reads `AGENT_STATE_FILE`, connects with `@ticket/agent-client` 
 - Yarn 4 workspaces, Corepack, `nodeLinker: node-modules` in `.yarnrc.yml`. Workspaces are `apps/*` and `packages/*`. Node 22.12+. No pnpm. Do not copy `pnpm-workspace.yaml`.
 - Electron's postinstall must run, because it downloads the Electron binary. From phase 2, set `better-sqlite3` `dependenciesMeta.built` to `false` so Yarn keeps the prebuilt binary and does not compile it.
 - TypeScript strict, ESM, Vitest, ESLint.
+- `yarn eval` runs the golden suite in `packages/eval/golden` through `createAgentHost` with a fake Ollama and exits non-zero on any failed case. Override feedback becomes eval cases and operator-approved few-shot candidates as files only; no automatic fine-tune and no automatic catalogue edit (`docs/eval.md`).
 
 ## Patterns, not files to copy
 

@@ -1444,6 +1444,18 @@ __metadata:
   languageName: unknown
   linkType: soft
 
+"@ticket/eval@workspace:packages/eval":
+  version: 0.0.0-use.local
+  resolution: "@ticket/eval@workspace:packages/eval"
+  dependencies:
+    "@ticket/agent-host": "workspace:*"
+    "@ticket/shared": "workspace:*"
+    "@ticket/storage": "workspace:*"
+    tsx: "npm:4.23.15"
+    zod: "npm:4.6.7"
+  languageName: unknown
+  linkType: soft
+
 "@ticket/model-provider@workspace:*, @ticket/model-provider@workspace:packages/model-provider":
   version: 0.0.0-use.local
   resolution: "@ticket/model-provider@workspace:packages/model-provider"

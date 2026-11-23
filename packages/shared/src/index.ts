@@ -126,3 +126,10 @@ export {
   type TokenState,
 } from './settings.js';
 export { IpcChannels, IpcEvents, RENDERER_API_KEY, type RendererApi } from './renderer-api.js';
+export {
+  OVERRIDE_FEEDBACK_LIMIT,
+  OverrideFeedbackItemSchema,
+  OverrideFeedbackSchema,
+  type OverrideFeedback,
+  type OverrideFeedbackItem,
+} from './feedback.js';

@@ -9,6 +9,7 @@ import {
   type ModelHealth,
   type ModelList,
   type OverrideTicket,
+  type OverrideFeedback,
   type SettingsPatch,
   type SettingsView,
   type StorageInfo,
@@ -65,6 +66,7 @@ export interface AgentCalls {
   classify(input: ClassifyTicket, signal?: AbortSignal): Promise<TicketView>;
   listTickets(): readonly TicketView[] | Promise<readonly TicketView[]>;
   override(input: OverrideTicket): TicketView | Promise<TicketView>;
+  overrideFeedback(): OverrideFeedback | Promise<OverrideFeedback>;
   modelHealth(): Promise<ModelHealth>;
   getSettings(): SettingsView | Promise<SettingsView>;
   updateSettings(patch: SettingsPatch): SettingsView | Promise<SettingsView>;
@@ -281,6 +283,8 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
             return reply(request.id, request.method, await requireCalls().override(request.params));
           case 'departments.update':
             return reply(request.id, request.method, await requireCalls().updateDepartment(request.params));
+          case 'tickets.overrideFeedback':
+            return reply(request.id, request.method, await requireCalls().overrideFeedback());
           case 'tickets.context':
             return reply(request.id, request.method, await requireCalls().ticketContext(request.params));
           case 'senders.merge':

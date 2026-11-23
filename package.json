@@ -19,7 +19,8 @@
     "dev": "yarn workspace @ticket/desktop run dev",
     "typecheck": "tsc -p tsconfig.json && yarn workspaces foreach --all --exclude redrock-ticketing-agent --verbose run typecheck",
     "test": "vitest run",
-    "lint": "eslint . --max-warnings=0"
+    "lint": "eslint . --max-warnings=0",
+    "eval": "yarn workspace @ticket/eval run eval"
   },
   "dependenciesMeta": {
     "@scarf/scarf": {

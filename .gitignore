@@ -23,3 +23,6 @@ coverage/
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Override feedback exports and generated eval files (may hold real ticket text)
+eval-out/

@@ -35,6 +35,9 @@ import {
   type TokenState,
   type UpdateDepartment,
   senderSummary,
+  OVERRIDE_FEEDBACK_LIMIT,
+  OverrideFeedbackSchema,
+  type OverrideFeedback,
 } from '@ticket/shared';
 import { type TicketDatabase } from '@ticket/storage';
 import { overriddenKeys, resolveSettings, type ResolvedSettings } from './settings.js';
@@ -96,6 +99,11 @@ export interface AgentHost {
   classify(input: ClassifyTicket, signal?: AbortSignal): Promise<TicketView>;
   listTickets(): readonly TicketView[];
   override(input: OverrideTicket): TicketView;
+  /**
+   * Read-only export of overrides that replaced a classifier department, with the
+   * current catalogue. No email. Nothing is written to departments or examples.
+   */
+  overrideFeedback(): OverrideFeedback;
   modelHealth(): Promise<ModelHealth>;
   getSettings(): SettingsView;
   updateSettings(patch: SettingsPatch): SettingsView;
@@ -201,6 +209,13 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       const updated = db.getById(ticket.id);
       if (!updated) throw new HostError('No such ticket.', 'not_found');
       return updated;
+    },
+    overrideFeedback() {
+      return OverrideFeedbackSchema.parse({
+        taxonomyVersion: db.taxonomyVersion(),
+        departments: db.listDepartments(),
+        items: db.overrideFeedback(OVERRIDE_FEEDBACK_LIMIT),
+      });
     },
     async modelHealth() {
       const { values } = resolved();

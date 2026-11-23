@@ -1,0 +1,21 @@
+{
+  "formatVersion": 1,
+  "approval": "operator",
+  "taxonomyVersion": 3,
+  "candidates": [
+    {
+      "departmentId": "it",
+      "example": "Invoice for the monitor I never received — The new monitor for my desk never arrived. Can IT check the order? Contact me at [email].",
+      "replacedDepartmentId": "billing",
+      "ticketId": "00000000-0000-4000-8000-00000000a001",
+      "taxonomyVersion": 3
+    },
+    {
+      "departmentId": "billing",
+      "example": "Laptop bag charge on my payslip — A laptop bag was deducted from my salary, but I paid for it with my card.",
+      "replacedDepartmentId": "it",
+      "ticketId": "00000000-0000-4000-8000-00000000a002",
+      "taxonomyVersion": 2
+    }
+  ]
+}

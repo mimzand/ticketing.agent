@@ -1,5 +1,5 @@
 import { createAgentLink, type AgentLink } from '@ticket/agent-client';
-import { ApiHealthSchema } from '@ticket/shared';
+import { ApiHealthSchema, OverrideFeedbackSchema } from '@ticket/shared';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -230,4 +230,16 @@ describe('sender email over HTTP', () => {
     expect((await call('/v1/senders:merge', { from: 'ann@example.com', into: 'x@example.com' })).status).toBe(404);
     expect((await call('/v1/senders:merge', { from: 'a@example.com', into: 'A@example.com' })).status).toBe(400);
   }, 60_000);
+
+  it('exports override feedback read only, with the API key, and without an email', async () => {
+    const app = createApiApp({ agent: link, apiKey: API_KEY, log: () => undefined });
+    expect((await app.request('/v1/tickets:override-feedback')).status).toBe(401);
+    const response = await app.request('/v1/tickets:override-feedback', { headers: { 'x-api-key': API_KEY } });
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    const feedback = OverrideFeedbackSchema.parse(JSON.parse(text));
+    // No model is reachable here, so no classifier department was ever replaced.
+    expect(feedback.items).toEqual([]);
+    expect(text).not.toContain('@example.com');
+  }, 30_000);
 });

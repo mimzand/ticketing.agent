@@ -8,6 +8,8 @@ import {
   DepartmentSchema,
   MergeSendersResultSchema,
   MergeSendersSchema,
+  OVERRIDE_FEEDBACK_LIMIT,
+  OverrideFeedbackSchema,
   TicketViewSchema,
 } from '@ticket/shared';
 import { z } from 'zod';
@@ -208,6 +210,22 @@ const operations: readonly Operation[] = [
       '200': { description: 'The ticket after the override.', schema: TicketViewSchema },
       '400': badRequest,
       '404': notFound,
+      ...authedErrors,
+    },
+  },
+  {
+    method: 'get',
+    path: '/v1/tickets:override-feedback',
+    tag: 'Tickets',
+    summary: 'Export override feedback',
+    description:
+      'Read only. Decided tickets whose first operator override replaced a department the classifier had applied ' +
+      `(replacedDepartmentId = classifier, departmentId = operator), newest first, at most ${OVERRIDE_FEEDBACK_LIMIT}, ` +
+      'with the current department catalogue and taxonomy version. No sender email. ' +
+      'Nothing is written back: departments, examples, and the model are not changed.',
+    auth: true,
+    responses: {
+      '200': { description: 'Override rows and the current catalogue.', schema: OverrideFeedbackSchema },
       ...authedErrors,
     },
   },

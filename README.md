@@ -33,6 +33,7 @@ Electron binary. `.yarnrc.yml` sets `nodeLinker: node-modules` and keeps lifecyc
 | `yarn typecheck` | TypeScript (strict) in every workspace |
 | `yarn test` | Vitest across all workspaces |
 | `yarn lint` | ESLint, including the package boundary rules |
+| `yarn eval` | Golden eval suite against a fake Ollama; exits non-zero on a regression. See [docs/eval.md](docs/eval.md) |
 
 The desktop alone is one command; it starts its own agent:
 

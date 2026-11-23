@@ -1,0 +1,119 @@
+{
+  "formatVersion": 1,
+  "suite": "overrides",
+  "threshold": 0.7,
+  "catalogues": {
+    "export": [
+      {
+        "id": "billing",
+        "name": "Billing",
+        "description": "Invoices, payments, refunds, and receipts.",
+        "active": true,
+        "aliases": [],
+        "examples": []
+      },
+      {
+        "id": "it",
+        "name": "IT",
+        "description": "Laptops, accounts, VPN, printers, and software.",
+        "active": true,
+        "aliases": [],
+        "examples": [
+          "My laptop will not start"
+        ]
+      },
+      {
+        "id": "facilities",
+        "name": "Facilities",
+        "description": "Office furniture and buildings.",
+        "active": false,
+        "aliases": [],
+        "examples": []
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "override-00000000-0000-4000-8000-00000000a001",
+      "source": "override",
+      "description": "An operator changed billing to it.",
+      "catalogue": "export",
+      "history": [],
+      "ticket": {
+        "externalId": "sample-101",
+        "subject": "Invoice for the monitor I never received",
+        "body": "The new monitor for my desk never arrived. Can IT check the order? Contact me at pat.sample@example.com.",
+        "channel": "email"
+      },
+      "reply": {
+        "kind": "scripted",
+        "output": {
+          "departmentId": "it",
+          "confidence": 0.95,
+          "rationale": "Placeholder for the operator department; replace with a recorded reply.",
+          "quote": null
+        }
+      },
+      "wrongReply": {
+        "kind": "scripted",
+        "output": {
+          "departmentId": "billing",
+          "confidence": 0.82,
+          "rationale": "Mentions an invoice.",
+          "quote": "Invoice for the monitor"
+        }
+      },
+      "expect": {
+        "status": "labeled",
+        "departmentId": "it",
+        "confidence": "above"
+      },
+      "origin": {
+        "ticketId": "00000000-0000-4000-8000-00000000a001",
+        "replacedDepartmentId": "billing",
+        "taxonomyVersion": 3
+      }
+    },
+    {
+      "id": "override-00000000-0000-4000-8000-00000000a002",
+      "source": "override",
+      "description": "An operator changed it to billing.",
+      "catalogue": "export",
+      "history": [],
+      "ticket": {
+        "externalId": "sample-102",
+        "subject": "Laptop bag charge on my payslip",
+        "body": "A laptop bag was deducted from my salary, but I paid for it with my card.",
+        "channel": "chat"
+      },
+      "reply": {
+        "kind": "scripted",
+        "output": {
+          "departmentId": "billing",
+          "confidence": 0.95,
+          "rationale": "Placeholder for the operator department; replace with a recorded reply.",
+          "quote": null
+        }
+      },
+      "wrongReply": {
+        "kind": "scripted",
+        "output": {
+          "departmentId": "it",
+          "confidence": 0.77,
+          "rationale": "Mentions a laptop.",
+          "quote": "Laptop bag"
+        }
+      },
+      "expect": {
+        "status": "labeled",
+        "departmentId": "billing",
+        "confidence": "above"
+      },
+      "origin": {
+        "ticketId": "00000000-0000-4000-8000-00000000a002",
+        "replacedDepartmentId": "it",
+        "taxonomyVersion": 2
+      }
+    }
+  ]
+}
