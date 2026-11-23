@@ -35,6 +35,7 @@ The process split, the package graph, and the loopback protocol come from the pa
 Vue renderer ── window.api (Zod) ──▶ Electron main (shell)
  sandboxed, no network                  │  @ticket/agent-client
                                         │  loopback + token
+                                        │  utilityProcess.fork (or attach)
                                         ▼
                                    apps/agent
                                       createAgentHost
@@ -52,7 +53,11 @@ The renderer never sees the agent port, the agent token, or the API key, and it 
 
 The agent binds `127.0.0.1` only and writes a state file: protocol, version, host, port, token, pid, `startedAt`. Default path `apps/agent/.agent-data/agent-state.json`. `AGENT_STATE_FILE` overrides it. Gitignore that directory. The host field is the literal `127.0.0.1`.
 
-In v1 the desktop connects to an agent that is already running (`yarn agent:dev`). It does not spawn one. Spawning it as an Electron utility process is later, and it would speak this same protocol.
+The desktop starts the agent itself. Electron main reads the state file first: if it names a live pid on `127.0.0.1` whose agent answers the handshake (for example `yarn agent:dev` or `yarn api:up`), the desktop attaches to that agent and starts nothing. Otherwise main forks exactly one child with Electron's `utilityProcess` (no shell, no `child_process.exec`): the same `apps/agent` service, built to `apps/desktop/out/agent/main.js`, speaking this same protocol. The child gets no command-line arguments; its paths (`AGENT_STATE_FILE`, `TICKET_DATA_DIR`) and the parent pid go in its environment, the agent generates its own token and writes it only to the state file, and `API_KEY` is removed from the child's environment. No token or key is ever a command-line argument or shown in the window; the Ollama token reaches the agent over the loopback handoff. An agent refuses to start next to a live agent for the same state file, so there is still one SQLite writer.
+
+On quit, main sends `system.shutdown` (desktop shell only), waits for the child to exit, and the state file is gone; an attached agent keeps running. If the child crashes, main removes the stale state file and restarts it with a short, bounded backoff (five tries, reset after 30 s of uptime) while the sidebar shows "Reconnecting…". A child started by the desktop watches the parent pid and stops when the app is killed outright.
+
+A classify is cancellable end to end: the shell aborts its request, the client sends `system.cancel`, the agent aborts the ADK run and the Ollama HTTP request, and no decision is stored. A ticket row without a decision (a cancel, or a crash mid-classify) does not hold its `externalId`: the next submit classifies it. A stored decision is returned without another model call, and a late cancel does not undo it.
 
 ## Packages
 
@@ -164,11 +169,11 @@ The main process reads `AGENT_STATE_FILE`, connects with `@ticket/agent-client` 
 
 ## Out of v1
 
-Research, chat, a tools package, the legacy runtime, an engine flag, an in-process agent mode, an Electron utility-process supervisor, reverse calls into the shell, code execution, `dockerode`, rate limits, CORS lists, pagination, idempotency-key conflicts, a second UI package. Do not build these unless a prompt asks for them. OpenAPI/Swagger and `safeStorage` for the Ollama token are in.
+Research, chat, a tools package, the legacy runtime, an engine flag, an in-process agent mode, reverse calls into the shell, code execution, `dockerode`, rate limits, CORS lists, pagination, idempotency-key conflicts, a second UI package. Do not build these unless a prompt asks for them. OpenAPI/Swagger, `safeStorage` for the Ollama token, and the Electron utility-process supervisor are in.
 
 ## Later
 
-Evidence quotes, department examples and aliases, taxonomy versions, spawning the agent from Electron on this same protocol, abort end to end, crash recovery, log redaction tests, rate limit, CORS.
+Evidence quotes, department examples and aliases, taxonomy versions, rate limit, CORS.
 
 ---
 

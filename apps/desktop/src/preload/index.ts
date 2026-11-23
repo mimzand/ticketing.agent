@@ -1,4 +1,6 @@
 import {
+  AgentStatusEventSchema,
+  CancelClassifyResultSchema,
   ClassifyTicketSchema,
   ConnectionTestResultSchema,
   CreateDepartmentSchema,
@@ -7,6 +9,7 @@ import {
   DesktopHealthSchema,
   DesktopSettingsViewSchema,
   IpcChannels,
+  IpcEvents,
   ModelListSchema,
   OverrideTicketSchema,
   RENDERER_API_KEY,
@@ -15,7 +18,7 @@ import {
   TokenStateSchema,
   type RendererApi,
 } from '@ticket/shared';
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
 /**
  * The renderer's only bridge to main: a fixed, frozen `window.api`.
@@ -26,6 +29,17 @@ import { contextBridge, ipcRenderer } from 'electron';
  */
 const api: RendererApi = {
   getHealth: async () => DesktopHealthSchema.parse(await ipcRenderer.invoke(IpcChannels.getHealth)),
+  onAgentStatus: (listener) => {
+    // Never hand the IPC event object to the renderer; validate the payload.
+    const handler = (_event: IpcRendererEvent, payload: unknown): void => {
+      const parsed = AgentStatusEventSchema.safeParse(payload);
+      if (parsed.success) listener(parsed.data);
+    };
+    ipcRenderer.on(IpcEvents.agentStatus, handler);
+    return () => {
+      ipcRenderer.removeListener(IpcEvents.agentStatus, handler);
+    };
+  },
   listDepartments: async () =>
     DepartmentSchema.array().parse(await ipcRenderer.invoke(IpcChannels.listDepartments)),
   createDepartment: async (input) =>
@@ -40,6 +54,8 @@ const api: RendererApi = {
     TicketViewSchema.parse(
       await ipcRenderer.invoke(IpcChannels.classifyTicket, ClassifyTicketSchema.parse(input)),
     ),
+  cancelClassify: async (input) =>
+    CancelClassifyResultSchema.parse(await ipcRenderer.invoke(IpcChannels.cancelClassify, input)),
   listTickets: async () => TicketViewSchema.array().parse(await ipcRenderer.invoke(IpcChannels.listTickets)),
   overrideTicket: async (input) =>
     TicketViewSchema.parse(

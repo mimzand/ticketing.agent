@@ -8,10 +8,11 @@
   "main": "./out/main/index.js",
   "scripts": {
     "postinstall": "install-electron",
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "dev": "node scripts/build-agent.mjs && electron-vite dev",
+    "build": "electron-vite build && node scripts/build-agent.mjs",
     "typecheck": "tsc -p tsconfig.node.json && vue-tsc -p tsconfig.web.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:agent": "node scripts/build-agent.mjs"
   },
   "devDependencies": {
     "@ticket/agent-client": "workspace:*",

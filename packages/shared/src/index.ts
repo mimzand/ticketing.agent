@@ -1,10 +1,14 @@
 export { err, ok, type Result } from './result.js';
 export {
+  AgentModeSchema,
+  AgentStatusEventSchema,
   AgentPingSchema,
   AgentReachabilitySchema,
   ApiHealthSchema,
   DesktopHealthSchema,
   OllamaReachabilitySchema,
+  type AgentMode,
+  type AgentStatusEvent,
   type AgentPing,
   type AgentReachability,
   type ApiHealth,
@@ -13,6 +17,8 @@ export {
 } from './health.js';
 export {
   CLASSIFY_MIN_CONFIDENCE_DEFAULT,
+  CancelClassifyResultSchema,
+  CancelClassifySchema,
   ClassifierOutputSchema,
   ClassifyTicketSchema,
   CreateDepartmentSchema,
@@ -27,6 +33,8 @@ export {
   OverrideTicketSchema,
   TicketViewSchema,
   UpdateDepartmentSchema,
+  type CancelClassify,
+  type CancelClassifyResult,
   type ClassifierOutput,
   type ClassifyTicket,
   type CreateDepartment,
@@ -80,4 +88,4 @@ export {
   type StorageInfo,
   type TokenState,
 } from './settings.js';
-export { IpcChannels, RENDERER_API_KEY, type RendererApi } from './renderer-api.js';
+export { IpcChannels, IpcEvents, RENDERER_API_KEY, type RendererApi } from './renderer-api.js';

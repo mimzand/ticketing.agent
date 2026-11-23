@@ -1,5 +1,6 @@
 import { type AgentLink } from '@ticket/agent-client';
 import {
+  CancelClassifySchema,
   ClassifyTicketSchema,
   ConnectionTestRequestSchema,
   ConnectionTestResultSchema,
@@ -21,6 +22,7 @@ import {
   type TokenState,
 } from '@ticket/shared';
 import { type ZodType } from 'zod';
+import { type SupervisorStatus } from './agent-supervisor.js';
 import { readAgentHealth } from './health.js';
 import { type TokenStore } from './token-store.js';
 
@@ -30,6 +32,8 @@ export type IpcHandler = (raw: unknown) => Promise<unknown>;
 export interface IpcDeps {
   readonly agent: Pick<AgentLink, 'request' | 'ping'>;
   readonly tokens: TokenStore;
+  /** The utility-process supervisor; absent in tests that only need the handlers. */
+  readonly supervisor?: { status(): SupervisorStatus };
 }
 
 /** A clean message for the renderer: the first schema issue, never the input value. */
@@ -53,6 +57,8 @@ function input<T>(schema: ZodType<T>, raw: unknown): T {
  */
 export function createIpcHandlers(deps: IpcDeps): Record<Channel, IpcHandler> {
   const { agent, tokens } = deps;
+  /** In-flight submits by externalId, so the ticket screen can cancel one. */
+  const submits = new Map<string, AbortController>();
 
   const settingsView = async (view?: unknown): Promise<DesktopSettingsView> =>
     DesktopSettingsViewSchema.parse({
@@ -61,7 +67,7 @@ export function createIpcHandlers(deps: IpcDeps): Record<Channel, IpcHandler> {
     });
 
   return {
-    [IpcChannels.getHealth]: () => readAgentHealth(agent),
+    [IpcChannels.getHealth]: () => readAgentHealth(agent, undefined, deps.supervisor),
     [IpcChannels.listDepartments]: async () =>
       DepartmentSchema.array().parse(await agent.request('departments.list', {})),
     [IpcChannels.createDepartment]: async (raw) =>
@@ -72,8 +78,25 @@ export function createIpcHandlers(deps: IpcDeps): Record<Channel, IpcHandler> {
       DeleteDepartmentResultSchema.parse(
         await agent.request('departments.delete', input(DeleteDepartmentSchema, raw)),
       ),
-    [IpcChannels.classifyTicket]: async (raw) =>
-      TicketViewSchema.parse(await agent.request('tickets.classify', input(ClassifyTicketSchema, raw))),
+    [IpcChannels.classifyTicket]: async (raw) => {
+      const ticket = input(ClassifyTicketSchema, raw);
+      if (submits.has(ticket.externalId)) throw new IpcInputError('This ticket is already being classified.');
+      const controller = new AbortController();
+      submits.set(ticket.externalId, controller);
+      try {
+        // The signal reaches the agent (system.cancel) and from there the Ollama request.
+        const result = await agent.request('tickets.classify', ticket, { signal: controller.signal });
+        return TicketViewSchema.parse(result);
+      } finally {
+        if (submits.get(ticket.externalId) === controller) submits.delete(ticket.externalId);
+      }
+    },
+    [IpcChannels.cancelClassify]: async (raw) => {
+      const { externalId } = input(CancelClassifySchema, raw);
+      const controller = submits.get(externalId);
+      controller?.abort();
+      return { cancelled: controller !== undefined };
+    },
     [IpcChannels.listTickets]: async () =>
       TicketViewSchema.array().parse(await agent.request('tickets.list', {})),
     [IpcChannels.overrideTicket]: async (raw) =>

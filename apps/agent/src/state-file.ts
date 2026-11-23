@@ -1,5 +1,6 @@
 import { AgentStateFileSchema, type AgentStateFile } from '@ticket/agent-protocol';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { connect } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { tokensEqual } from './token.js';
 
@@ -44,4 +45,43 @@ export function removeStateFile(path: string, token: string): boolean {
   if (!parsed.success || !tokensEqual(parsed.data.token, token)) return false;
   rmSync(path, { force: true });
   return true;
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (cause) {
+    return (cause as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+function portAnswers(port: number, timeoutMs: number): Promise<boolean> {
+  return new Promise((done) => {
+    const socket = connect({ host: '127.0.0.1', port });
+    const finish = (value: boolean) => {
+      clearTimeout(timer);
+      socket.destroy();
+      done(value);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    socket.once('connect', () => finish(true));
+    socket.once('error', () => finish(false));
+  });
+}
+
+/**
+ * The agent another process is running for this state file, if any: a valid file
+ * whose pid is alive and whose port on 127.0.0.1 accepts a connection. A missing,
+ * invalid, or stale file (crashed agent) returns null and may be replaced.
+ */
+export async function findLiveAgent(path: string): Promise<{ readonly pid: number; readonly port: number } | null> {
+  let state: AgentStateFile;
+  try {
+    state = AgentStateFileSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
+  } catch {
+    return null;
+  }
+  if (state.pid === process.pid || !isProcessAlive(state.pid)) return null;
+  return (await portAnswers(state.port, 1_000)) ? { pid: state.pid, port: state.port } : null;
 }

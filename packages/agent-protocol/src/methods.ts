@@ -22,7 +22,7 @@ import {
   type Result,
 } from '@ticket/shared';
 import { z } from 'zod';
-import { type RequestEnvelope } from './envelope.js';
+import { MessageIdSchema, type RequestEnvelope } from './envelope.js';
 import { describeIssues, protocolError, type ProtocolError } from './errors.js';
 import { HelloAckSchema, HelloRequestSchema } from './handshake.js';
 
@@ -33,6 +33,16 @@ export const NoParamsSchema = z.strictObject({});
 export const PROTOCOL_METHODS = {
   'system.hello': { params: HelloRequestSchema, result: HelloAckSchema },
   'system.ping': { params: NoParamsSchema, result: AgentPingSchema },
+  /** Shell only. The agent answers, removes its state file, and exits. */
+  'system.shutdown': { params: NoParamsSchema, result: z.null() },
+  /**
+   * Cancels an in-flight request of this connection by its message id. The cancelled
+   * request answers `cancelled`. `cancelled: false` when it had already finished.
+   */
+  'system.cancel': {
+    params: z.strictObject({ id: MessageIdSchema }),
+    result: z.strictObject({ cancelled: z.boolean() }),
+  },
   'model.health': { params: NoParamsSchema, result: ModelHealthSchema },
   'departments.list': { params: NoParamsSchema, result: z.array(DepartmentSchema) },
   'departments.create': { params: CreateDepartmentSchema, result: DepartmentSchema },

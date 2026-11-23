@@ -16,7 +16,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import { count, desc, eq } from 'drizzle-orm';
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { decisions, departments, settings, tickets } from './schema.js';
@@ -40,8 +40,15 @@ export interface TicketDatabase {
   writeSettings(patch: SettingsPatch): void;
   counts(): { readonly departments: number; readonly tickets: number };
   findByExternalId(externalId: string): TicketView | null;
-  /** Inserts the ticket row only. The host stores the decision afterwards. */
+  /**
+   * Stores the ticket row only; the host stores the decision afterwards. If a row for
+   * this externalId exists without a decision (a classify that crashed or was cancelled
+   * before its decision was saved), that row is reused with the new text instead of
+   * failing the unique constraint. Throws if the externalId already has a decision.
+   */
   insertTicket(input: ClassifyTicket): { readonly id: string; readonly createdAt: string };
+  /** Removes a ticket row that has no decision (e.g. a cancelled classify). Decided rows are kept. */
+  discardUndecided(ticketId: string): void;
   saveDecision(ticketId: string, decision: Decision): void;
   getById(id: string): TicketView | null;
   listRecent(): readonly TicketView[];
@@ -102,6 +109,18 @@ const ticketQuery = (db: Database) =>
     .from(tickets)
     .innerJoin(decisions, eq(decisions.ticketId, tickets.id));
 
+/**
+ * `packages/storage/drizzle` when running from source; `drizzle/` next to the bundle
+ * when the desktop runs the built agent (`apps/desktop/out/agent`).
+ */
+function migrationsFolder(): string {
+  const source = join(import.meta.dirname, '..', 'drizzle');
+  const bundled = join(import.meta.dirname, 'drizzle');
+  return existsSync(join(source, 'meta', '_journal.json')) || !existsSync(join(bundled, 'meta', '_journal.json'))
+    ? source
+    : bundled;
+}
+
 /** Opens the file, creates parent directories, and applies the Drizzle migrations. */
 export function openTicketDatabase(filePath: string): TicketDatabase {
   mkdirSync(dirname(filePath), { recursive: true });
@@ -109,7 +128,7 @@ export function openTicketDatabase(filePath: string): TicketDatabase {
   sqlite.pragma('journal_mode = WAL');
   sqlite.pragma('foreign_keys = ON');
   const db = drizzle(sqlite, { schema: { departments, tickets, decisions, settings } });
-  migrate(db, { migrationsFolder: join(import.meta.dirname, '..', 'drizzle') });
+  migrate(db, { migrationsFolder: migrationsFolder() });
 
   return {
     listDepartments() {
@@ -194,19 +213,41 @@ export function openTicketDatabase(filePath: string): TicketDatabase {
       return row ? toView(row) : null;
     },
     insertTicket(input) {
-      const id = randomUUID();
-      const createdAt = new Date().toISOString();
-      db.insert(tickets)
-        .values({
-          id,
-          externalId: input.externalId,
-          subject: input.subject,
-          body: input.body,
-          channel: input.channel,
-          createdAt,
-        })
-        .run();
-      return { id, createdAt };
+      return db.transaction((tx) => {
+        const createdAt = new Date().toISOString();
+        const existing = tx
+          .select({ id: tickets.id, decided: decisions.ticketId })
+          .from(tickets)
+          .leftJoin(decisions, eq(decisions.ticketId, tickets.id))
+          .where(eq(tickets.externalId, input.externalId))
+          .get();
+        if (existing?.decided) throw new Error('This externalId already has a decision.');
+        if (existing) {
+          tx.update(tickets)
+            .set({ subject: input.subject, body: input.body, channel: input.channel, createdAt })
+            .where(eq(tickets.id, existing.id))
+            .run();
+          return { id: existing.id, createdAt };
+        }
+        const id = randomUUID();
+        tx.insert(tickets)
+          .values({
+            id,
+            externalId: input.externalId,
+            subject: input.subject,
+            body: input.body,
+            channel: input.channel,
+            createdAt,
+          })
+          .run();
+        return { id, createdAt };
+      });
+    },
+    discardUndecided(ticketId) {
+      db.transaction((tx) => {
+        const decided = tx.select({ id: decisions.ticketId }).from(decisions).where(eq(decisions.ticketId, ticketId)).get();
+        if (!decided) tx.delete(tickets).where(eq(tickets.id, ticketId)).run();
+      });
     },
     saveDecision(ticketId, decision) {
       const parsed = DecisionSchema.parse(decision);

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { type DesktopHealth } from '@ticket/shared';
+import { type AgentStatusEvent, type DesktopHealth } from '@ticket/shared';
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import DepartmentsSection from './sections/DepartmentsSection.vue';
 import SettingsSection from './sections/SettingsSection.vue';
@@ -12,10 +12,13 @@ const SECTIONS: readonly { id: Section; label: string }[] = [
   { id: 'settings', label: 'Settings' },
 ];
 const POLL_MS = 5_000;
+/** Faster while the agent is down, so "Reconnecting…" clears soon after it is back. */
+const POLL_DOWN_MS = 1_000;
 
 const section = ref<Section>('tickets');
 const health = ref<DesktopHealth | null>(null);
-let timer: ReturnType<typeof setInterval> | undefined;
+let timer: ReturnType<typeof setTimeout> | undefined;
+let unmounted = false;
 
 async function refreshHealth(): Promise<void> {
   try {
@@ -24,16 +27,46 @@ async function refreshHealth(): Promise<void> {
     health.value = {
       agent: 'unavailable',
       reason: 'The desktop shell could not check the agent.',
+      reconnecting: false,
       checkedAt: new Date().toISOString(),
     };
+  }
+  if (unmounted) return;
+  timer = setTimeout(() => void refreshHealth(), health.value.agent === 'connected' ? POLL_MS : POLL_DOWN_MS);
+}
+
+/** Keeps "Reconnecting…" on screen briefly even when the restart is very fast. */
+const RECONNECT_MIN_SHOW_MS = 1_500;
+let reconnectShownAt = 0;
+let unsubscribe: (() => void) | undefined;
+
+function onAgentStatus(status: AgentStatusEvent): void {
+  if (status.reconnecting) {
+    reconnectShownAt = Date.now();
+    health.value = {
+      agent: 'unavailable',
+      reason: 'The agent stopped unexpectedly. Reconnecting…',
+      reconnecting: true,
+      checkedAt: new Date().toISOString(),
+    };
+    return;
+  }
+  if (status.state === 'running' || status.state === 'attached' || status.state === 'failed') {
+    const wait = Math.max(0, reconnectShownAt + RECONNECT_MIN_SHOW_MS - Date.now());
+    clearTimeout(timer);
+    timer = setTimeout(() => void refreshHealth(), wait);
   }
 }
 
 onMounted(() => {
+  unsubscribe = window.api.onAgentStatus(onAgentStatus);
   void refreshHealth();
-  timer = setInterval(() => void refreshHealth(), POLL_MS);
 });
-onBeforeUnmount(() => clearInterval(timer));
+onBeforeUnmount(() => {
+  unmounted = true;
+  unsubscribe?.();
+  clearTimeout(timer);
+});
 </script>
 
 <template>
@@ -56,13 +89,20 @@ onBeforeUnmount(() => clearInterval(timer));
       <div class="agent" aria-live="polite">
         <span
           class="dot"
-          :data-state="health === null ? 'unknown' : health.agent"
+          :data-state="health === null ? 'unknown' : health.agent === 'unavailable' && health.reconnecting ? 'reconnecting' : health.agent"
           aria-hidden="true"
         ></span>
         <span v-if="health === null">Checking agent…</span>
         <span v-else-if="health.agent === 'connected'">
           Agent connected
-          <small class="muted">pid {{ health.ping.pid }} · v{{ health.ping.version }}</small>
+          <small class="muted">
+            {{ health.mode === 'attached' ? 'Attached' : health.mode === 'spawned' ? 'Started by the app' : 'Running' }}
+            · pid {{ health.ping.pid }} · v{{ health.ping.version }}
+          </small>
+        </span>
+        <span v-else-if="health.reconnecting" data-testid="agent-reconnecting">
+          Reconnecting…
+          <small class="muted">The agent stopped unexpectedly and is being restarted.</small>
         </span>
         <span v-else :title="health.reason">
           Agent unavailable
@@ -140,6 +180,9 @@ nav {
 }
 .dot[data-state='unavailable'] {
   background: var(--danger);
+}
+.dot[data-state='reconnecting'] {
+  background: var(--warn);
 }
 .content {
   overflow: auto;

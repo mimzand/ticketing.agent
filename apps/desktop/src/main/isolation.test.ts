@@ -14,7 +14,7 @@ function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) return sourceFiles(path);
-    return /\.(ts|vue|html)$/.test(entry.name) && !entry.name.endsWith('.test.ts') ? [path] : [];
+    return /\.(ts|vue|html)$/.test(entry.name) && !/\.(test|fixture)\.ts$/.test(entry.name) ? [path] : [];
   });
 }
 
@@ -75,11 +75,13 @@ describe('preload', () => {
     const keys = [...body.matchAll(/^\s{2}(\w+):/gm)].map((m) => m[1]);
     expect(keys).toEqual([
       'getHealth',
+      'onAgentStatus',
       'listDepartments',
       'createDepartment',
       'updateDepartment',
       'deleteDepartment',
       'classifyTicket',
+      'cancelClassify',
       'listTickets',
       'overrideTicket',
       'getSettings',
@@ -99,10 +101,15 @@ describe('preload', () => {
 describe('main process', () => {
   it('reaches the agent through @ticket/agent-client, not the HTTP API', () => {
     expect(
-      offenders(join(srcDir, 'main'), [/\bfetch\s*\(/, /8787/, /API_PORT|API_HOST|API_KEY/, /node:https?['"]/]),
+      offenders(join(srcDir, 'main'), [/\bfetch\s*\(/, /8787/, /API_PORT|API_HOST|env\[['"]API_KEY/, /child_process/, /\bexec(Sync|File)?\s*\(/, /node:https?['"]/]),
     ).toEqual([]);
     const index = readFileSync(join(srcDir, 'main', 'index.ts'), 'utf8');
     expect(index).toMatch(/from '@ticket\/agent-client'/);
     expect(index).toMatch(/kind: 'shell'/);
+    // Exactly one place starts a process: utilityProcess.fork for the agent.
+    const forks = sourceFiles(join(srcDir, 'main')).flatMap((file) =>
+      [...readFileSync(file, 'utf8').matchAll(/utilityProcess\.fork\(/g)].map(() => relative(srcDir, file)),
+    );
+    expect(forks).toEqual([join('main', 'index.ts')]);
   });
 });

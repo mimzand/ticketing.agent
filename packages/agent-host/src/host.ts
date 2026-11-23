@@ -1,4 +1,4 @@
-import { classifyTicketText } from '@ticket/adk-runtime';
+import { ClassifyCancelledError, classifyTicketText } from '@ticket/adk-runtime';
 import {
   canSendToken,
   createOllamaClient,
@@ -30,7 +30,7 @@ import {
 import { type TicketDatabase } from '@ticket/storage';
 import { overriddenKeys, resolveSettings, type ResolvedSettings } from './settings.js';
 
-export type HostErrorCode = 'bad_request' | 'not_found' | 'conflict';
+export type HostErrorCode = 'bad_request' | 'not_found' | 'conflict' | 'cancelled';
 
 /** A request the host will not apply. The message names the rule, not the ticket text or a token. */
 export class HostError extends Error {
@@ -55,7 +55,12 @@ export interface AgentHost {
   createDepartment(input: CreateDepartment): Department;
   updateDepartment(input: UpdateDepartment): Department;
   deleteDepartment(input: DeleteDepartment): DeleteDepartmentResult;
-  classify(input: ClassifyTicket): Promise<TicketView>;
+  /**
+   * Classifies and stores the decision. `signal` cancels it: the Ollama request is
+   * aborted, no decision is stored, and the externalId can be submitted again. Once the
+   * decision is stored, a late cancel changes nothing.
+   */
+  classify(input: ClassifyTicket, signal?: AbortSignal): Promise<TicketView>;
   listTickets(): readonly TicketView[];
   override(input: OverrideTicket): TicketView;
   modelHealth(): Promise<ModelHealth>;
@@ -149,10 +154,10 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       const { values } = resolved();
       return { reachable: await clientFor(values).checkReachable(), model: values.model };
     },
-    classify: (input) =>
+    classify: (input, signal) =>
       exclusive(() => {
         const { values } = resolved();
-        return classifyOnce(db, clientFor(values), values.minConfidence, input);
+        return classifyOnce(db, clientFor(values), values.minConfidence, input, signal);
       }),
 
     getSettings: view,
@@ -229,15 +234,22 @@ function describeOllamaError(error: unknown): string {
   }
 }
 
+const cancelled = () => new HostError('The classify was cancelled. Nothing was stored.', 'cancelled');
+
 async function classifyOnce(
   db: TicketDatabase,
   ollama: OllamaClient,
   minConfidence: number,
   input: ClassifyTicket,
+  signal?: AbortSignal,
 ): Promise<TicketView> {
+  // A stored decision is returned as is: no second model call.
   const stored = db.findByExternalId(input.externalId);
   if (stored) return stored;
+  // Cancelled while waiting in the queue.
+  if (signal?.aborted) throw cancelled();
 
+  // Reuses a row left without a decision by a crash or a cancel.
   const created = db.insertTicket(input);
   // The classifier sees only active departments.
   const active = db.listDepartments().filter((department) => department.active);
@@ -247,6 +259,7 @@ async function classifyOnce(
       ollama,
       departments: active,
       ticket: input,
+      ...(signal && { signal }),
     });
     const known = active.some((department) => department.id === output.departmentId);
     if (!known || output.confidence < minConfidence) {
@@ -264,8 +277,17 @@ async function classifyOnce(
         status: 'labeled',
       };
     }
-  } catch {
+  } catch (error) {
+    if (signal?.aborted || error instanceof ClassifyCancelledError) {
+      db.discardUndecided(created.id);
+      throw cancelled();
+    }
     decision = FAILED;
+  }
+  // Cancelled after the model answered but before the save: store nothing.
+  if (signal?.aborted) {
+    db.discardUndecided(created.id);
+    throw cancelled();
   }
   db.saveDecision(created.id, decision);
   const view = db.getById(created.id);

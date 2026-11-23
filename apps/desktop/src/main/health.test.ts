@@ -13,8 +13,30 @@ describe('readAgentHealth', () => {
     expect(DesktopHealthSchema.parse(health)).toEqual({
       agent: 'connected',
       ping,
+      mode: null,
       checkedAt: '2026-01-01T00:00:00.000Z',
     });
+  });
+
+  it('reports the mode and "reconnecting" from the supervisor', async () => {
+    const ping = { pid: 42, version: '0.1.0', protocolVersion: 1 };
+    const attached = await readAgentHealth({ ping: () => Promise.resolve(ping) }, now, {
+      status: () => ({ state: 'attached', mode: 'attached', reconnecting: false }),
+    });
+    expect(attached).toMatchObject({ agent: 'connected', mode: 'attached' });
+    let pinged = false;
+    const down = await readAgentHealth(
+      {
+        ping: () => {
+          pinged = true;
+          return Promise.resolve(ping);
+        },
+      },
+      now,
+      { status: () => ({ state: 'reconnecting', mode: null, reconnecting: true }) },
+    );
+    expect(down).toMatchObject({ agent: 'unavailable', reconnecting: true });
+    expect(pinged).toBe(false);
   });
 
   it('reports a fixed reason when the agent is down', async () => {

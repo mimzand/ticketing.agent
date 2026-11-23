@@ -44,6 +44,7 @@ describe('DesktopHealthSchema', () => {
         agent: 'connected',
         checkedAt,
         ping: { pid: 1, version: '0.1.0', protocolVersion: 1 },
+        mode: 'spawned',
       }).success,
     ).toBe(true);
   });

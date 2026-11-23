@@ -60,6 +60,14 @@ export const ClassifyTicketSchema = z.strictObject({
 });
 export type ClassifyTicket = z.infer<typeof ClassifyTicketSchema>;
 
+/** Cancel the in-flight submit of this externalId (desktop only). */
+export const CancelClassifySchema = z.strictObject({
+  externalId: z.string().trim().min(1).max(200),
+});
+export type CancelClassify = z.infer<typeof CancelClassifySchema>;
+export const CancelClassifyResultSchema = z.strictObject({ cancelled: z.boolean() });
+export type CancelClassifyResult = z.infer<typeof CancelClassifyResultSchema>;
+
 export const DecisionStatusSchema = z.enum(['labeled', 'needs_review', 'overridden', 'failed']);
 export type DecisionStatus = z.infer<typeof DecisionStatusSchema>;
 

@@ -1,4 +1,4 @@
-import { type DesktopHealth } from './health.js';
+import { type AgentStatusEvent, type DesktopHealth } from './health.js';
 import {
   type ConnectionTestRequest,
   type ConnectionTestResult,
@@ -9,6 +9,8 @@ import {
   type TokenState,
 } from './settings.js';
 import {
+  type CancelClassify,
+  type CancelClassifyResult,
   type ClassifyTicket,
   type CreateDepartment,
   type DeleteDepartment,
@@ -30,6 +32,7 @@ export const IpcChannels = {
   updateDepartment: 'departments:update',
   deleteDepartment: 'departments:delete',
   classifyTicket: 'tickets:classify',
+  cancelClassify: 'tickets:cancel-classify',
   listTickets: 'tickets:list',
   overrideTicket: 'tickets:override',
   getSettings: 'settings:get',
@@ -41,6 +44,11 @@ export const IpcChannels = {
   clearOllamaToken: 'settings:clear-token',
 } as const;
 
+/** Events from Electron main to the renderer. */
+export const IpcEvents = {
+  agentStatus: 'agent:status',
+} as const;
+
 /**
  * The fixed `window.api` surface. The renderer gets nothing else. Nothing here
  * returns the Ollama access token: `saveOllamaToken` takes it and answers only
@@ -48,11 +56,18 @@ export const IpcChannels = {
  */
 export interface RendererApi {
   getHealth(): Promise<DesktopHealth>;
+  /** Supervisor state changes (started, attached, reconnecting…). Returns an unsubscribe function. */
+  onAgentStatus(listener: (status: AgentStatusEvent) => void): () => void;
   listDepartments(): Promise<readonly Department[]>;
   createDepartment(input: CreateDepartment): Promise<Department>;
   updateDepartment(input: UpdateDepartment): Promise<Department>;
   deleteDepartment(input: DeleteDepartment): Promise<DeleteDepartmentResult>;
   classifyTicket(input: ClassifyTicket): Promise<TicketView>;
+  /**
+   * Cancels the in-flight submit of this externalId. The pending `classifyTicket` then
+   * rejects; nothing is stored, and the same externalId can be submitted again.
+   */
+  cancelClassify(input: CancelClassify): Promise<CancelClassifyResult>;
   listTickets(): Promise<readonly TicketView[]>;
   overrideTicket(input: OverrideTicket): Promise<TicketView>;
   getSettings(): Promise<DesktopSettingsView>;

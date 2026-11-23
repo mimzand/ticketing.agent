@@ -22,7 +22,7 @@ export interface AgentLink {
   request<M extends ClientMethodName>(
     method: M,
     params: RequestParamsInput<M>,
-    options?: { readonly timeoutMs?: number },
+    options?: { readonly timeoutMs?: number; readonly signal?: AbortSignal },
   ): Promise<RequestResult<M>>;
   /** `system.ping`. Rejects with an `AgentClientError` when the agent is not reachable. */
   ping(options?: { readonly timeoutMs?: number }): Promise<AgentPing>;
@@ -94,6 +94,7 @@ export function createAgentLink(options: AgentLinkOptions): AgentLink {
     const c = await current();
     return c.request(method, params, {
       timeoutMs: requestOptions?.timeoutMs ?? AGENT_REQUEST_TIMEOUT_MS,
+      ...(requestOptions?.signal && { signal: requestOptions.signal }),
     });
   };
 

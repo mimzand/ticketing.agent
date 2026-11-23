@@ -26,6 +26,7 @@ export interface ClassifyTextInput {
  * text is only the user message, so it cannot change the instruction.
  */
 export async function classifyTicketText(input: ClassifyTextInput): Promise<ClassifierOutput> {
+  if (input.signal?.aborted) throw new ClassifyCancelledError();
   const { InMemorySessionService, LlmAgent, Runner } = await loadAdkRuntime();
   const { OllamaLlm } = await import('./ollama-llm.js');
   const catalogue = input.departments
@@ -33,7 +34,7 @@ export async function classifyTicketText(input: ClassifyTextInput): Promise<Clas
     .join('\n');
   const agent = new LlmAgent({
     name: 'classifier',
-    model: new OllamaLlm(input.ollama),
+    model: new OllamaLlm(input.ollama, input.signal),
     instruction: [
       'You assign exactly one department id from this list.',
       catalogue || '(no departments)',
@@ -73,11 +74,20 @@ export async function classifyTicketText(input: ClassifyTextInput): Promise<Clas
     const chunk = parts.map((part) => part.text ?? '').join('');
     if (chunk && !event.partial) text = chunk;
   }
+  if (input.signal?.aborted) throw new ClassifyCancelledError();
   if (failed || !text) throw new Error('The model did not return a classification.');
   const json = extractJson(text);
   const parsed = ClassifierOutputSchema.safeParse(json);
   if (!parsed.success) throw new Error('The model returned JSON that does not match the classifier schema.');
   return parsed.data;
+}
+
+/** The caller's signal aborted the classify. Nothing should be stored for it. */
+export class ClassifyCancelledError extends Error {
+  constructor() {
+    super('The classify was cancelled.');
+    this.name = 'ClassifyCancelledError';
+  }
 }
 
 function extractJson(text: string): unknown {

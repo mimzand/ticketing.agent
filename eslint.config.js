@@ -105,6 +105,7 @@ export default defineConfig(
       '*.{js,ts}',
       'test/**/*.ts',
       'apps/*/*.{js,ts}',
+      'apps/*/scripts/**/*.{js,mjs}',
       'apps/agent/src/**/*.ts',
       'apps/api/src/**/*.ts',
       'apps/desktop/src/main/**/*.ts',

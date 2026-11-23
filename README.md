@@ -29,26 +29,50 @@ Electron binary. `.yarnrc.yml` sets `nodeLinker: node-modules` and keeps lifecyc
 | `yarn agent:dev` | Starts the agent on `127.0.0.1` (random port) and writes `apps/agent/.agent-data/agent-state.json` |
 | `yarn api:dev` | Starts the HTTP API on `http://127.0.0.1:8787` |
 | `yarn api:up` | Starts the agent and the API together |
-| `yarn dev` | Starts the desktop app. It connects to an agent that is already running; start `yarn agent:dev` first |
+| `yarn dev` | Builds the agent bundle and starts the desktop app. The app starts the agent itself, or attaches to one that is already running |
 | `yarn typecheck` | TypeScript (strict) in every workspace |
 | `yarn test` | Vitest across all workspaces |
 | `yarn lint` | ESLint, including the package boundary rules |
 
-Typical session, in two terminals:
+The desktop alone is one command; it starts its own agent:
+
+```sh
+yarn dev        # desktop shell + its agent (utility process)
+```
+
+With the HTTP API as well, start the API side first; the desktop then attaches to that agent
+instead of starting a second one (there is one SQLite writer):
 
 ```sh
 yarn api:up     # agent + API
-yarn dev        # desktop shell
+yarn dev        # desktop shell, attached
 ```
 
 ## Desktop shell
 
-The sidebar has three sections; the agent status is at the bottom of the sidebar.
+The sidebar has three sections; the agent status is at the bottom of the sidebar ("Started by
+the app", "Attached", or "Reconnecting…" while a crashed agent is restarted).
+
+### The agent process
+
+- On start, Electron main reads the state file. If it names a live agent (`yarn agent:dev`,
+  `yarn api:up`), the app attaches to it. Otherwise it forks the built agent
+  (`apps/desktop/out/agent/main.js`) with Electron's `utilityProcess`: one child, no shell,
+  no arguments. Paths go in its environment; `API_KEY` is removed from it.
+- Quit sends `system.shutdown` and waits; the state file is gone afterwards. An attached
+  agent keeps running.
+- A crash: the stale state file is replaced and the agent restarts after 0.25, 0.5, 1, 2, then
+  4 seconds; after that the app gives up until it is restarted.
+- If the app is killed outright, its agent notices the parent is gone and stops.
+- Logs: `desktop.log` under the app's user data folder (`logs/`), with the agent's output.
+  Neither contains the agent token, the API key, or the Ollama token.
 
 - **Tickets** (opens first): the 50 most recent tickets with subject, status, department,
   confidence, channel, and created time. Select a row for the body, the rationale, and the
   override (active departments only). **New ticket** submits one; the button is disabled while
-  the classifier runs. `needs_review` and `failed` never show a department.
+  the classifier runs, and **Cancel** next to it stops that submit: the Ollama request is
+  aborted, nothing is stored, and the same external id can be submitted again.
+  `needs_review` and `failed` never show a department.
 - **Departments**: every department, inactive ones included. Add (id, name, description; new
   ones are active), **Edit** (name, description, active; the id never changes), and **Remove**.
   Remove is refused while any ticket decision references the id; deactivate it instead.

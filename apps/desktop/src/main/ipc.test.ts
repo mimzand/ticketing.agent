@@ -91,6 +91,7 @@ const INPUTS: Record<string, unknown> = {
   [IpcChannels.deleteDepartment]: { id: 'billing' },
   [IpcChannels.classifyTicket]: { externalId: 'ext-1', subject: 'Invoice', body: 'Body', channel: 'email' },
   [IpcChannels.overrideTicket]: { id: TICKET_ID, departmentId: 'billing' },
+  [IpcChannels.cancelClassify]: { externalId: 'ext-1' },
   [IpcChannels.updateSettings]: { minConfidence: 0.8 },
   [IpcChannels.testConnection]: { baseUrl: 'https://ollama.example.com' },
   [IpcChannels.saveOllamaToken]: TOKEN,

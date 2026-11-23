@@ -54,7 +54,8 @@ export interface AgentCalls {
   createDepartment(input: CreateDepartment): Department | Promise<Department>;
   updateDepartment(input: UpdateDepartment): Department | Promise<Department>;
   deleteDepartment(input: DeleteDepartment): DeleteDepartmentResult | Promise<DeleteDepartmentResult>;
-  classify(input: ClassifyTicket): Promise<TicketView>;
+  /** `signal` aborts when the client cancels the request or disconnects. */
+  classify(input: ClassifyTicket, signal?: AbortSignal): Promise<TicketView>;
   listTickets(): readonly TicketView[] | Promise<readonly TicketView[]>;
   override(input: OverrideTicket): TicketView | Promise<TicketView>;
   modelHealth(): Promise<ModelHealth>;
@@ -67,7 +68,7 @@ export interface AgentCalls {
 }
 
 /** HostError codes that travel as protocol codes; anything else is `bad_request`. */
-const HOST_ERROR_CODES: readonly ProtocolErrorCode[] = ['bad_request', 'not_found', 'conflict'];
+const HOST_ERROR_CODES: readonly ProtocolErrorCode[] = ['bad_request', 'not_found', 'conflict', 'cancelled'];
 
 export interface AgentServerOptions {
   /** Token clients must present (AgentTokenSchema). */
@@ -79,6 +80,11 @@ export interface AgentServerOptions {
   readonly handshakeTimeoutMs?: number;
   /** Absent only in handshake tests. Ticket methods then answer `internal`. */
   readonly calls?: AgentCalls;
+  /**
+   * `system.shutdown` from the desktop shell: called after the reply is sent. Without
+   * it the method answers `forbidden`.
+   */
+  readonly onShutdown?: () => void;
   /** Never receives the token. */
   readonly log?: (message: string) => void;
 }
@@ -102,6 +108,7 @@ export async function startAgentServer(options: AgentServerOptions): Promise<Age
     token: options.token,
     agentVersion: options.agentVersion,
     calls: options.calls,
+    onShutdown: options.onShutdown,
     startedAt,
     handshakeTimeoutMs: options.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS,
     log,
@@ -143,6 +150,7 @@ interface ConnectionContext {
   readonly token: string;
   readonly agentVersion: string;
   readonly calls: AgentCalls | undefined;
+  readonly onShutdown: (() => void) | undefined;
   readonly startedAt: string;
   readonly handshakeTimeoutMs: number;
   readonly log: (message: string) => void;
@@ -153,6 +161,8 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
   let authenticated = false;
   let clientKind: ClientKind | undefined;
   let closing = false;
+  /** Requests of this connection that can be cancelled, by message id. */
+  const inFlight = new Map<string, AbortController>();
 
   const send = (envelope: Envelope) => {
     if (!socket.destroyed) socket.write(encodeFrame(envelope));
@@ -231,8 +241,33 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
             return reply(request.id, request.method, await requireCalls().listDepartments());
           case 'departments.create':
             return reply(request.id, request.method, await requireCalls().createDepartment(request.params));
-          case 'tickets.classify':
-            return reply(request.id, request.method, await requireCalls().classify(request.params));
+          case 'tickets.classify': {
+            const controller = new AbortController();
+            inFlight.set(request.id, controller);
+            try {
+              return reply(request.id, request.method, await requireCalls().classify(request.params, controller.signal));
+            } finally {
+              inFlight.delete(request.id);
+            }
+          }
+          case 'system.cancel': {
+            const target = inFlight.get(request.params.id);
+            target?.abort();
+            return reply(request.id, request.method, { cancelled: target !== undefined });
+          }
+          case 'system.shutdown':
+            // Only the desktop shell that supervises the agent may stop it.
+            if (clientKind !== 'shell' || !ctx.onShutdown) {
+              return sendError(
+                request.id,
+                request.method,
+                protocolError('forbidden', 'Only the desktop shell can stop the agent.'),
+              );
+            }
+            ctx.log('Shutdown requested by the desktop shell.');
+            reply(request.id, request.method, null);
+            setImmediate(ctx.onShutdown);
+            return undefined;
           case 'tickets.list':
             return reply(request.id, request.method, await requireCalls().listTickets());
           case 'tickets.override':
@@ -305,5 +340,10 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
     }
   });
   socket.on('error', () => socket.destroy());
-  socket.on('close', () => clearTimeout(handshakeTimer));
+  socket.on('close', () => {
+    clearTimeout(handshakeTimer);
+    // A client that goes away cancels what it was waiting for.
+    for (const controller of inFlight.values()) controller.abort();
+    inFlight.clear();
+  });
 }

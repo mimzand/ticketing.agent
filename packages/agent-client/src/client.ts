@@ -5,6 +5,7 @@ import {
   parseResult,
   PROTOCOL_NAME,
   PROTOCOL_VERSION,
+  UNATTRIBUTED_ERROR_METHOD,
   type ClientKind,
   type Envelope,
   type HelloAck,
@@ -53,6 +54,11 @@ export interface AgentClientOptions {
 
 export interface RequestOptions {
   readonly timeoutMs?: number;
+  /**
+   * Cancels the request: it rejects at once with `cancelled`, and the agent is sent
+   * `system.cancel` so it stops the work (for a classify, the Ollama request).
+   */
+  readonly signal?: AbortSignal;
 }
 
 /** Methods a client may call after the handshake. */
@@ -132,8 +138,9 @@ export async function connectAgent(options: AgentClientOptions): Promise<AgentCl
       if (envelope.kind === 'req') continue; // No reverse calls in v1.
       const p = pending.get(envelope.id);
       if (!p) {
-        // An unattributed error (e.g. handshake timeout) ends the connection.
-        if (envelope.kind === 'error') {
+        // An unattributed error (bad frame, handshake timeout) ends the connection. A late
+        // answer to a request this side already gave up on (timeout, cancel) is ignored.
+        if (envelope.kind === 'error' && envelope.method === UNATTRIBUTED_ERROR_METHOD) {
           failAll(new AgentClientError(envelope.payload.code, envelope.payload.message));
         }
         continue;
@@ -160,23 +167,50 @@ export async function connectAgent(options: AgentClientOptions): Promise<AgentCl
     method: M,
     params: unknown,
     requestTimeoutMs: number,
+    signal?: AbortSignal,
   ): Promise<RequestResult<M>> =>
     new Promise((resolve, reject) => {
       if (socket.destroyed) {
         reject(closeReason ?? new AgentClientError('connection_closed', 'The connection is closed.'));
         return;
       }
+      if (signal?.aborted) {
+        reject(new AgentClientError('cancelled', `${method} was cancelled.`));
+        return;
+      }
       const id = randomUUID();
+      const onAbort = () => {
+        if (!pending.has(id)) return;
+        settle(id);
+        reject(new AgentClientError('cancelled', `${method} was cancelled.`));
+        // Tell the agent; its answer (and the cancelled request's own error) is ignored.
+        if (!socket.destroyed) {
+          const cancel: Envelope = { id: randomUUID(), kind: 'req', method: 'system.cancel', payload: { id } };
+          socket.write(encodeFrame(cancel));
+        }
+      };
       const timer = setTimeout(() => {
-        pending.delete(id);
+        settle(id);
         reject(new AgentClientError('timeout', `${method} timed out.`));
       }, requestTimeoutMs);
+      const settle = (key: string) => {
+        pending.delete(key);
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+      };
       pending.set(id, {
         method,
-        resolve: (value) => resolve(value as RequestResult<M>),
-        reject,
+        resolve: (value) => {
+          signal?.removeEventListener('abort', onAbort);
+          resolve(value as RequestResult<M>);
+        },
+        reject: (error) => {
+          signal?.removeEventListener('abort', onAbort);
+          reject(error);
+        },
         timer,
       });
+      signal?.addEventListener('abort', onAbort, { once: true });
       const envelope: Envelope = { id, kind: 'req', method, payload: params };
       socket.write(encodeFrame(envelope));
     });
@@ -198,7 +232,7 @@ export async function connectAgent(options: AgentClientOptions): Promise<AgentCl
         return socket.destroyed;
       },
       request: (method, params, requestOptions = {}) =>
-        send(method, params, requestOptions.timeoutMs ?? timeoutMs),
+        send(method, params, requestOptions.timeoutMs ?? timeoutMs, requestOptions.signal),
       onClose: (listener) => {
         if (socket.destroyed) {
           listener(closeReason ?? new AgentClientError('connection_closed', 'Closed.'));

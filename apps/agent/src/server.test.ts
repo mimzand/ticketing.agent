@@ -6,9 +6,19 @@ import {
   PROTOCOL_VERSION,
   type Envelope,
 } from '@ticket/agent-protocol';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { generateToken, startAgentServer, tokensEqual, type AgentServer } from './index.js';
+import {
+  generateToken,
+  runAgent,
+  startAgentServer,
+  tokensEqual,
+  writeStateFile,
+  type AgentServer,
+} from './index.js';
 
 const token = generateToken();
 let server: AgentServer | undefined;
@@ -180,5 +190,72 @@ describe('settings.setToken', () => {
     expect(answer).toEqual({ id: 's1', kind: 'res', method: 'settings.setToken', payload: { tokenSet: true } });
     expect(received).toEqual([ollamaToken]);
     p.socket.destroy();
+  });
+});
+
+describe('system.shutdown', () => {
+  const helloAs = (kind: 'shell' | 'cli'): Envelope => ({
+    id: 'h1',
+    kind: 'req',
+    method: 'system.hello',
+    payload: { protocol: PROTOCOL_NAME, version: PROTOCOL_VERSION, token, client: { kind, version: '0.0.0' } },
+  });
+  const shutdown: Envelope = { id: 'x1', kind: 'req', method: 'system.shutdown', payload: {} };
+
+  it('is refused for a cli client and accepted from the shell', async () => {
+    let stops = 0;
+    server = await startAgentServer({ token, agentVersion: '0.1.0', onShutdown: () => void (stops += 1) });
+    const cli = await probe(server.port);
+    cli.send(helloAs('cli'));
+    await cli.next();
+    cli.send(shutdown);
+    expect(await cli.next()).toMatchObject({ kind: 'error', payload: { code: 'forbidden' } });
+    cli.socket.destroy();
+
+    const shell = await probe(server.port);
+    shell.send(helloAs('shell'));
+    await shell.next();
+    shell.send(shutdown);
+    expect(await shell.next()).toEqual({ id: 'x1', kind: 'res', method: 'system.shutdown', payload: null });
+    await new Promise((r) => setImmediate(r));
+    expect(stops).toBe(1);
+    shell.socket.destroy();
+  });
+});
+
+describe('single writer', () => {
+  it('refuses to start next to a live agent for the same state file', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ticket-single-'));
+    const env = { TICKET_DATA_DIR: join(dir, 'tickets.db') };
+    const stateFile = join(dir, 'agent-state.json');
+    // Another process's agent: same state file, a different (live) pid.
+    const other = await startAgentServer({ token, agentVersion: '0.1.0' });
+    writeStateFile(stateFile, {
+      protocol: PROTOCOL_NAME,
+      version: PROTOCOL_VERSION,
+      host: '127.0.0.1',
+      port: other.port,
+      token,
+      pid: process.ppid,
+      startedAt: other.startedAt,
+    });
+    try {
+      await expect(runAgent({ stateFile, agentVersion: '0.1.0', env })).rejects.toThrow(/already running/);
+      // A stale file (dead pid) is replaced.
+      writeStateFile(stateFile, {
+        protocol: PROTOCOL_NAME,
+        version: PROTOCOL_VERSION,
+        host: '127.0.0.1',
+        port: other.port,
+        token,
+        pid: 2 ** 22 + 12345,
+        startedAt: other.startedAt,
+      });
+      const agent = await runAgent({ stateFile, agentVersion: '0.1.0', env });
+      await agent.stop();
+    } finally {
+      await other.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

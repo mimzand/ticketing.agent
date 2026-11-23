@@ -11,6 +11,8 @@ let server: Server | undefined;
 let db: TicketDatabase | undefined;
 let dir: string | undefined;
 let chatCalls = 0;
+/** Chat requests the client hung up on before an answer (a cancel reached Ollama). */
+let hungUpChats = 0;
 /** Request bodies and headers the fake Ollama received. */
 let seen: { path: string; model: string | undefined; headers: IncomingHttpHeaders }[] = [];
 
@@ -21,7 +23,10 @@ afterEach(async () => {
   dir = undefined;
   const current = server;
   server = undefined;
-  if (current) await new Promise<void>((resolve) => current.close(() => resolve()));
+  if (current) {
+    current.closeAllConnections();
+    await new Promise<void>((resolve) => current.close(() => resolve()));
+  }
 });
 
 const json = (value: unknown) => JSON.stringify(value);
@@ -30,6 +35,7 @@ const DEAD_URL = 'http://127.0.0.1:1';
 /** A fake Ollama: `/api/chat` answers `reply()`, `/api/tags` lists two models. */
 async function fakeOllama(reply: () => unknown): Promise<string> {
   chatCalls = 0;
+  hungUpChats = 0;
   seen = [];
   server = createServer((req, res) => {
     const chunks: Buffer[] = [];
@@ -45,6 +51,12 @@ async function fakeOllama(reply: () => unknown): Promise<string> {
       }
       chatCalls += 1;
       const answer = reply();
+      if (answer === 'hang') {
+        res.on('close', () => {
+          if (!res.writableEnded) hungUpChats += 1;
+        });
+        return;
+      }
       if (answer === 'down') {
         res.destroy();
         return;
@@ -253,3 +265,56 @@ describe('settings', () => {
     expect(info.databasePath).toMatch(/tickets\.db$/);
   }, 30_000);
 });
+
+describe('interrupted classifies', () => {
+  it('reclassifies a ticket row that has no decision (a crash) instead of failing the unique externalId', async () => {
+    const host = hostFor(await fakeOllama(() => ({ departmentId: 'billing', confidence: 0.91, rationale: 'Invoice.' })));
+    // What a crash between the ticket insert and the decision leaves behind.
+    if (!db) throw new Error('no db');
+    db.insertTicket({ ...ticket, subject: 'Old text' });
+    expect(host.listTickets()).toEqual([]);
+    const view = await host.classify(ticket);
+    expect(view).toMatchObject({ subject: 'Invoice 18', decision: { status: 'labeled', departmentId: 'billing' } });
+    expect(host.listTickets()).toHaveLength(1);
+    expect(host.storageInfo().ticketCount).toBe(1);
+  }, 30_000);
+
+  it('a cancel aborts the Ollama request, stores nothing, and frees the externalId', async () => {
+    let mode: 'hang' | 'answer' = 'hang';
+    const host = hostFor(
+      await fakeOllama(() => (mode === 'hang' ? 'hang' : { departmentId: 'billing', confidence: 0.9, rationale: 'Invoice.' })),
+    );
+    const controller = new AbortController();
+    const pending = host.classify(ticket, controller.signal).catch((error: unknown) => error);
+    await waitUntil(() => chatCalls === 1);
+    controller.abort();
+    expect(await pending).toMatchObject({ name: 'HostError', code: 'cancelled' });
+    await waitUntil(() => hungUpChats === 1);
+    expect(host.listTickets()).toEqual([]);
+    expect(host.storageInfo().ticketCount).toBe(0);
+
+    mode = 'answer';
+    const again = await host.classify(ticket);
+    expect(again.decision.status).toBe('labeled');
+  }, 30_000);
+
+  it('a cancel after the decision is stored does not undo it', async () => {
+    const host = hostFor(await fakeOllama(() => ({ departmentId: 'billing', confidence: 0.9, rationale: 'Invoice.' })));
+    const controller = new AbortController();
+    const view = await host.classify(ticket, controller.signal);
+    controller.abort();
+    expect(host.listTickets()).toEqual([view]);
+    // And a cancelled resubmit of a decided externalId still returns the stored decision.
+    const late = new AbortController();
+    late.abort();
+    expect((await host.classify(ticket, late.signal)).id).toBe(view.id);
+  }, 30_000);
+});
+
+async function waitUntil(condition: () => boolean, timeoutMs = 20_000): Promise<void> {
+  const end = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > end) throw new Error('Timed out.');
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}

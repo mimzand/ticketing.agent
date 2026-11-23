@@ -3,7 +3,7 @@ import { PROTOCOL_NAME, PROTOCOL_VERSION } from '@ticket/agent-protocol';
 import { openTicketDatabase } from '@ticket/storage';
 import { resolve } from 'node:path';
 import { startAgentServer, type AgentServer } from './server.js';
-import { removeStateFile, writeStateFile } from './state-file.js';
+import { findLiveAgent, removeStateFile, writeStateFile } from './state-file.js';
 import { generateToken } from './token.js';
 
 export interface RunAgentOptions {
@@ -12,6 +12,8 @@ export interface RunAgentOptions {
   readonly port?: number;
   readonly env?: NodeJS.ProcessEnv;
   readonly log?: (message: string) => void;
+  /** `system.shutdown` from the desktop shell. */
+  readonly onShutdown?: () => void;
 }
 
 /** `TICKET_DATA_DIR` is the SQLite file. The default sits next to the agent package. */
@@ -30,6 +32,14 @@ export interface RunningAgent {
 /** Starts the server with a fresh token, then publishes the state file. */
 export async function runAgent(options: RunAgentOptions): Promise<RunningAgent> {
   const env = options.env ?? process.env;
+  // One SQLite writer: never start next to a live agent for the same state file.
+  // A stale file (its agent crashed) is simply replaced below.
+  const live = await findLiveAgent(options.stateFile);
+  if (live) {
+    throw new Error(
+      `Another agent (pid ${live.pid}) is already running for this state file and owns the database. Use it, or stop it first.`,
+    );
+  }
   const databasePath = resolveTicketDatabasePath(env);
   const db = openTicketDatabase(databasePath);
   // Settings (saved in SQLite, overridable by OLLAMA_HOST, OLLAMA_MODEL,
@@ -44,6 +54,7 @@ export async function runAgent(options: RunAgentOptions): Promise<RunningAgent> 
       calls: host,
       ...(options.port !== undefined && { port: options.port }),
       ...(options.log && { log: options.log }),
+      ...(options.onShutdown && { onShutdown: options.onShutdown }),
     });
     writeStateFile(options.stateFile, {
       protocol: PROTOCOL_NAME,

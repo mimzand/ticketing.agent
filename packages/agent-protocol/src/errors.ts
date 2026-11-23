@@ -22,6 +22,10 @@ export const PROTOCOL_ERROR_CODES = [
   /** This client kind may not call the method (e.g. only the desktop shell sets the token). */
   'forbidden',
   'timeout',
+  /** The client cancelled the request (`system.cancel`). Nothing was stored for it. */
+  'cancelled',
+  /** The agent is stopping (`system.shutdown`). */
+  'shutting_down',
   'internal',
 ] as const;
 export const ProtocolErrorCodeSchema = z.enum(PROTOCOL_ERROR_CODES);

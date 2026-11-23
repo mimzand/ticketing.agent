@@ -19,6 +19,10 @@ const selectedId = ref<string | null>(null);
 const showForm = ref(false);
 const submitting = ref(false);
 const submitError = ref('');
+const submitNotice = ref('');
+/** The externalId being classified, so Cancel can stop exactly that submit. */
+const inFlightExternalId = ref<string | null>(null);
+const cancelling = ref(false);
 const form = ref({ externalId: '', subject: '', body: '', channel: 'email' });
 
 const overriding = ref(false);
@@ -58,6 +62,8 @@ async function submit(): Promise<void> {
   if (submitting.value) return;
   submitting.value = true;
   submitError.value = '';
+  submitNotice.value = '';
+  inFlightExternalId.value = form.value.externalId.trim();
   try {
     const created = await window.api.classifyTicket({ ...form.value });
     form.value = { externalId: '', subject: '', body: '', channel: form.value.channel };
@@ -65,9 +71,27 @@ async function submit(): Promise<void> {
     await load();
     select(created.id);
   } catch (error) {
-    submitError.value = errorMessage(error);
+    const text = errorMessage(error);
+    // A cancel keeps the form filled in, so the same ticket can be submitted again.
+    if (cancelling.value || /^Cancelled/.test(text)) submitNotice.value = 'Cancelled. Nothing was stored; you can submit it again.';
+    else submitError.value = text;
   } finally {
     submitting.value = false;
+    cancelling.value = false;
+    inFlightExternalId.value = null;
+  }
+}
+
+/** Stops the in-flight submit: the Ollama request is aborted and no decision is stored. */
+async function cancelSubmit(): Promise<void> {
+  const externalId = inFlightExternalId.value;
+  if (!externalId || cancelling.value) return;
+  cancelling.value = true;
+  try {
+    await window.api.cancelClassify({ externalId });
+  } catch (error) {
+    cancelling.value = false;
+    submitError.value = errorMessage(error);
   }
 }
 
@@ -134,9 +158,20 @@ onMounted(load);
         </label>
       </div>
       <p v-if="submitError" class="error" role="alert">{{ submitError }}</p>
+      <p v-if="submitNotice" class="notice" role="status">{{ submitNotice }}</p>
       <div class="actions">
         <button type="submit" class="primary" :disabled="submitting" data-testid="submit-ticket">
           {{ submitting ? 'Classifying…' : 'Submit ticket' }}
+        </button>
+        <button
+          v-if="submitting"
+          type="button"
+          class="danger"
+          :disabled="cancelling"
+          data-testid="cancel-ticket"
+          @click="cancelSubmit"
+        >
+          {{ cancelling ? 'Cancelling…' : 'Cancel' }}
         </button>
         <span v-if="submitting" class="muted" role="status">Waiting for the classifier…</span>
       </div>

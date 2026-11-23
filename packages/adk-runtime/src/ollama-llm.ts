@@ -5,15 +5,24 @@ import { BaseLlm, type LlmRequest, type LlmResponse } from './adk.js';
 export class OllamaLlm extends BaseLlm {
   static override readonly supportedModels: (string | RegExp)[] = [];
 
-  constructor(private readonly ollama: OllamaClient) {
+  /**
+   * `signal` is the caller's cancel: it reaches the Ollama HTTP request even if the
+   * ADK runner does not pass its own abort signal down.
+   */
+  constructor(
+    private readonly ollama: OllamaClient,
+    private readonly signal?: AbortSignal,
+  ) {
     super({ model: ollama.config.model });
   }
 
   override async *generateContentAsync(
     llmRequest: LlmRequest,
     _stream?: boolean,
-    abortSignal?: AbortSignal,
+    runnerSignal?: AbortSignal,
   ): AsyncGenerator<LlmResponse, void> {
+    const signals = [runnerSignal, this.signal].filter((s): s is AbortSignal => s !== undefined);
+    const abortSignal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
     try {
       const text = await this.ollama.generate(
         {
