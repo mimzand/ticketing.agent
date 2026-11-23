@@ -25,17 +25,21 @@ export const ISOLATED_WEB_PREFERENCES = {
   spellcheck: false,
 } as const satisfies WebPreferences;
 
+/** Matches `--bg` of the dark theme, so the window never flashes white before the first paint. */
+export const DARK_BACKGROUND = '#111318';
+
 export interface WindowOptions extends AppUrlOptions {
   readonly allowDevTools: boolean;
 }
 
 export function createMainWindow(options: WindowOptions): BrowserWindow {
   const window = new BrowserWindow({
-    width: 720,
-    height: 480,
-    minWidth: 480,
-    minHeight: 320,
+    width: 1200,
+    height: 780,
+    minWidth: 860,
+    minHeight: 560,
     show: false,
+    backgroundColor: DARK_BACKGROUND,
     title: 'Ticketing Agent',
     autoHideMenuBar: true,
     webPreferences: {

@@ -25,3 +25,9 @@ export const decisions = sqliteTable('decisions', {
   rationale: text('rationale').notNull(),
   status: text('status').notNull(),
 });
+
+/** Non-secret settings, one JSON value per key. The Ollama access token is never stored. */
+export const settings = sqliteTable('settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+});

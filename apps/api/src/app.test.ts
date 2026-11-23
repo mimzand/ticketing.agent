@@ -115,3 +115,63 @@ describe('GET /health', () => {
     expect(response.status).toBe(401);
   });
 });
+
+describe('department routes', () => {
+  beforeAll(startAgent, 30_000);
+  afterAll(stopAgent);
+
+  const call = (path: string, init: RequestInit = {}) =>
+    createApiApp({ agent: link, apiKey: API_KEY, log: () => undefined }).request(path, {
+      ...init,
+      headers: { 'x-api-key': API_KEY, 'content-type': 'application/json' },
+    });
+
+  it('PATCH edits name, description, and active, and keeps the id', async () => {
+    await call('/v1/departments', {
+      method: 'POST',
+      body: JSON.stringify({ id: 'hr', name: 'HR', description: 'People' }),
+    });
+    const patched = await call('/v1/departments/hr', {
+      method: 'PATCH',
+      body: JSON.stringify({ name: 'People Ops', active: false }),
+    });
+    expect(patched.status).toBe(200);
+    expect(await patched.json()).toEqual({ id: 'hr', name: 'People Ops', description: 'People', active: false });
+
+    const renamed = await call('/v1/departments/hr', { method: 'PATCH', body: JSON.stringify({ id: 'people' }) });
+    expect(renamed.status).toBe(400);
+  }, 30_000);
+
+  it('DELETE removes an unused department and refuses one a decision references', async () => {
+    await call('/v1/departments', {
+      method: 'POST',
+      body: JSON.stringify({ id: 'spare', name: 'Spare', description: '' }),
+    });
+    expect((await call('/v1/departments/spare', { method: 'DELETE' })).status).toBe(200);
+    expect((await call('/v1/departments/spare', { method: 'DELETE' })).status).toBe(404);
+
+    await call('/v1/departments', {
+      method: 'POST',
+      body: JSON.stringify({ id: 'billing', name: 'Billing', description: 'Invoices' }),
+    });
+    const classified = await call('/v1/tickets:classify', {
+      method: 'POST',
+      body: JSON.stringify({ externalId: 'api-1', subject: 'Invoice', body: 'Pay', channel: 'email' }),
+    });
+    const ticket = (await classified.json()) as { id: string };
+    await call(`/v1/tickets/${ticket.id}/override`, {
+      method: 'POST',
+      body: JSON.stringify({ departmentId: 'billing' }),
+    });
+    const refused = await call('/v1/departments/billing', { method: 'DELETE' });
+    expect(refused.status).toBe(409);
+    const body = (await refused.json()) as { error: { message: string } };
+    expect(body.error.message).toMatch(/Deactivate it instead/);
+  }, 60_000);
+
+  it('has no settings or token route', async () => {
+    for (const path of ['/v1/settings', '/v1/settings/token']) {
+      expect((await call(path, { method: 'POST', body: '{"token":"x"}' })).status).toBe(404);
+    }
+  });
+});

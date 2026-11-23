@@ -2,7 +2,10 @@ import { AgentClientError, type AgentLink } from '@ticket/agent-client';
 import {
   ClassifyTicketSchema,
   CreateDepartmentSchema,
+  DeleteDepartmentResultSchema,
+  DeleteDepartmentSchema,
   DepartmentSchema,
+  UpdateDepartmentSchema,
   OverrideTicketSchema,
   TicketViewSchema,
 } from '@ticket/shared';
@@ -50,6 +53,12 @@ async function forward(run: () => Promise<unknown>): Promise<JsonResult> {
     if (error instanceof AgentClientError && error.code === 'bad_request') {
       return { status: 400, body: { error: { code: 'bad_request', message: error.message } } };
     }
+    if (error instanceof AgentClientError && error.code === 'not_found') {
+      return { status: 404, body: { error: { code: 'not_found', message: error.message } } };
+    }
+    if (error instanceof AgentClientError && error.code === 'conflict') {
+      return { status: 409, body: { error: { code: 'conflict', message: error.message } } };
+    }
     if (
       error instanceof AgentClientError &&
       (error.code === 'not_running' || error.code === 'connect_failed' || error.code === 'connection_closed')
@@ -92,4 +101,45 @@ export async function overrideTicket(c: Context, agent: AgentLink, id: string): 
     return { status: 400, body: { error: { code: 'bad_request', message: `Invalid body at: ${paths(parsed.error)}.` } } };
   }
   return forward(async () => TicketViewSchema.parse(await agent.request('tickets.override', parsed.data)));
+}
+
+async function readObject(c: Context): Promise<Record<string, unknown> | JsonResult> {
+  let raw: unknown;
+  try {
+    raw = await c.req.json();
+  } catch {
+    return { status: 400, body: { error: { code: 'bad_request', message: 'The body must be JSON.' } } };
+  }
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return { status: 400, body: { error: { code: 'bad_request', message: 'The body must be a JSON object.' } } };
+  }
+  return raw as Record<string, unknown>;
+}
+
+/** PATCH /v1/departments/{id}: name, description, active. The id is immutable (decisions store it). */
+export async function updateDepartment(c: Context, agent: AgentLink, id: string): Promise<JsonResult> {
+  const body = await readObject(c);
+  if (isJsonResult(body)) return body;
+  if ('id' in body) {
+    return {
+      status: 400,
+      body: { error: { code: 'bad_request', message: 'The department id cannot change; decisions store it.' } },
+    };
+  }
+  const parsed = UpdateDepartmentSchema.safeParse({ ...body, id });
+  if (!parsed.success) {
+    return { status: 400, body: { error: { code: 'bad_request', message: `Invalid body at: ${paths(parsed.error)}.` } } };
+  }
+  return forward(async () => DepartmentSchema.parse(await agent.request('departments.update', parsed.data)));
+}
+
+/** DELETE /v1/departments/{id}: 409 while any decision references the id. */
+export async function deleteDepartment(agent: AgentLink, id: string): Promise<JsonResult> {
+  const parsed = DeleteDepartmentSchema.safeParse({ id });
+  if (!parsed.success) {
+    return { status: 400, body: { error: { code: 'bad_request', message: 'Invalid department id.' } } };
+  }
+  return forward(async () =>
+    DeleteDepartmentResultSchema.parse(await agent.request('departments.delete', parsed.data)),
+  );
 }

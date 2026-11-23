@@ -1,7 +1,5 @@
 import { createAgentHost } from '@ticket/agent-host';
 import { PROTOCOL_NAME, PROTOCOL_VERSION } from '@ticket/agent-protocol';
-import { createOllamaClient, loadOllamaConfig } from '@ticket/model-provider';
-import { CLASSIFY_MIN_CONFIDENCE_DEFAULT } from '@ticket/shared';
 import { openTicketDatabase } from '@ticket/storage';
 import { resolve } from 'node:path';
 import { startAgentServer, type AgentServer } from './server.js';
@@ -23,16 +21,6 @@ export function resolveTicketDatabasePath(env: NodeJS.ProcessEnv): string {
   return resolve(import.meta.dirname, '..', '.data', 'tickets.db');
 }
 
-function readMinConfidence(env: NodeJS.ProcessEnv): number {
-  const raw = env['CLASSIFY_MIN_CONFIDENCE']?.trim();
-  if (!raw) return CLASSIFY_MIN_CONFIDENCE_DEFAULT;
-  const value = Number(raw);
-  if (!Number.isFinite(value) || value < 0 || value > 1) {
-    throw new Error('CLASSIFY_MIN_CONFIDENCE must be a number from 0 to 1.');
-  }
-  return value;
-}
-
 export interface RunningAgent {
   readonly server: AgentServer;
   readonly stateFile: string;
@@ -42,9 +30,11 @@ export interface RunningAgent {
 /** Starts the server with a fresh token, then publishes the state file. */
 export async function runAgent(options: RunAgentOptions): Promise<RunningAgent> {
   const env = options.env ?? process.env;
-  const db = openTicketDatabase(resolveTicketDatabasePath(env));
-  const ollama = createOllamaClient(loadOllamaConfig(env));
-  const host = createAgentHost({ db, ollama, minConfidence: readMinConfidence(env) });
+  const databasePath = resolveTicketDatabasePath(env);
+  const db = openTicketDatabase(databasePath);
+  // Settings (saved in SQLite, overridable by OLLAMA_HOST, OLLAMA_MODEL,
+  // CLASSIFY_MIN_CONFIDENCE) are resolved by the host on every call.
+  const host = createAgentHost({ db, env, databasePath });
   const token = generateToken();
   let server: AgentServer | undefined;
   try {

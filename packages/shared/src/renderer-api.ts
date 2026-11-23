@@ -1,10 +1,22 @@
 import { type DesktopHealth } from './health.js';
 import {
+  type ConnectionTestRequest,
+  type ConnectionTestResult,
+  type DesktopSettingsView,
+  type ModelList,
+  type SettingsPatch,
+  type StorageInfo,
+  type TokenState,
+} from './settings.js';
+import {
   type ClassifyTicket,
   type CreateDepartment,
+  type DeleteDepartment,
+  type DeleteDepartmentResult,
   type Department,
   type OverrideTicket,
   type TicketView,
+  type UpdateDepartment,
 } from './ticket.js';
 
 /** Name of the object the preload exposes on `window`. */
@@ -15,17 +27,39 @@ export const IpcChannels = {
   getHealth: 'agent:get-health',
   listDepartments: 'departments:list',
   createDepartment: 'departments:create',
+  updateDepartment: 'departments:update',
+  deleteDepartment: 'departments:delete',
   classifyTicket: 'tickets:classify',
   listTickets: 'tickets:list',
   overrideTicket: 'tickets:override',
+  getSettings: 'settings:get',
+  updateSettings: 'settings:update',
+  testConnection: 'settings:test-connection',
+  listModels: 'settings:list-models',
+  getStorageInfo: 'settings:storage-info',
+  saveOllamaToken: 'settings:save-token',
+  clearOllamaToken: 'settings:clear-token',
 } as const;
 
-/** The fixed `window.api` surface. The renderer gets nothing else. */
+/**
+ * The fixed `window.api` surface. The renderer gets nothing else. Nothing here
+ * returns the Ollama access token: `saveOllamaToken` takes it and answers only
+ * whether a token is set.
+ */
 export interface RendererApi {
   getHealth(): Promise<DesktopHealth>;
   listDepartments(): Promise<readonly Department[]>;
   createDepartment(input: CreateDepartment): Promise<Department>;
+  updateDepartment(input: UpdateDepartment): Promise<Department>;
+  deleteDepartment(input: DeleteDepartment): Promise<DeleteDepartmentResult>;
   classifyTicket(input: ClassifyTicket): Promise<TicketView>;
   listTickets(): Promise<readonly TicketView[]>;
   overrideTicket(input: OverrideTicket): Promise<TicketView>;
+  getSettings(): Promise<DesktopSettingsView>;
+  updateSettings(patch: SettingsPatch): Promise<DesktopSettingsView>;
+  testConnection(input: ConnectionTestRequest): Promise<ConnectionTestResult>;
+  listModels(): Promise<ModelList>;
+  getStorageInfo(): Promise<StorageInfo>;
+  saveOllamaToken(token: string): Promise<TokenState>;
+  clearOllamaToken(): Promise<TokenState>;
 }

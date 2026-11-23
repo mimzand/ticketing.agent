@@ -19,7 +19,7 @@ vi.mock('electron', () => {
   return { BrowserWindow };
 });
 
-const { createMainWindow } = await import('./window.js');
+const { createMainWindow, DARK_BACKGROUND } = await import('./window.js');
 
 describe('createMainWindow', () => {
   beforeEach(() => {
@@ -42,6 +42,15 @@ describe('createMainWindow', () => {
     });
     expect(webPreferences['preload']).toMatch(/preload[\\/]index\.cjs$/);
     expect(webPreferences['devTools']).toBe(false);
+  });
+
+  it('paints the dark background before the renderer loads', () => {
+    createMainWindow({
+      devServerUrl: undefined,
+      rendererIndexPath: '/app/out/renderer/index.html',
+      allowDevTools: false,
+    });
+    expect((created.options[0] as { backgroundColor: string }).backgroundColor).toBe(DARK_BACKGROUND);
   });
 
   it('denies every new window', () => {

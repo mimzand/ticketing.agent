@@ -40,6 +40,11 @@ export interface AgentLinkOptions {
   ) => Promise<StateFileConnection>;
   /** Never receives the token. */
   readonly log?: (message: string) => void;
+  /**
+   * Runs once per new connection, before any other request uses it. Electron main
+   * uses it to hand the agent its in-memory access token again after an agent restart.
+   */
+  readonly onConnect?: (client: AgentClient) => Promise<void>;
 }
 
 export function createAgentLink(options: AgentLinkOptions): AgentLink {
@@ -63,6 +68,14 @@ export function createAgentLink(options: AgentLinkOptions): AgentLink {
     if (closed) {
       next.close();
       throw new AgentClientError('connection_closed', 'The agent link is closed.');
+    }
+    if (options.onConnect) {
+      try {
+        await options.onConnect(next);
+      } catch (error) {
+        log('The connect hook failed; the connection is used without it.');
+        void error;
+      }
     }
     client = next;
     log(`Connected to the agent on ${connection.state.host}:${connection.state.port}.`);

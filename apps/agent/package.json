@@ -18,7 +18,6 @@
   "dependencies": {
     "@ticket/agent-host": "workspace:*",
     "@ticket/agent-protocol": "workspace:*",
-    "@ticket/model-provider": "workspace:*",
     "@ticket/shared": "workspace:*",
     "@ticket/storage": "workspace:*"
   },

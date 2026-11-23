@@ -43,9 +43,28 @@ describe('renderer isolation', () => {
         /sendBeacon/,
         /\brequire\s*\(/,
         /from\s+['"](node:|electron|@ticket\/agent-)/,
+        /\bsafeStorage\./,
         /8787/,
       ]),
     ).toEqual([]);
+  });
+});
+
+describe('theme before first paint', () => {
+  it('starts dark in the HTML and in the window background', () => {
+    const html = readFileSync(join(rendererDir, 'index.html'), 'utf8');
+    expect(html).toMatch(/<html[^>]*\sdata-theme="dark"/);
+    // A classic script in <head>, before the app bundle, switches to light only if chosen.
+    const head = html.slice(0, html.indexOf('</head>'));
+    expect(head).toContain('<script src="./theme-boot.js"></script>');
+    const boot = readFileSync(join(rendererDir, 'public', 'theme-boot.js'), 'utf8');
+    expect(boot).toContain("'ticket.theme'");
+    expect(boot).toContain("setAttribute('data-theme', 'light')");
+    const css = readFileSync(join(rendererDir, 'src', 'styles.css'), 'utf8');
+    const windowSource = readFileSync(join(srcDir, 'main', 'window.ts'), 'utf8');
+    const background = /DARK_BACKGROUND = '(#[0-9a-f]{6})'/i.exec(windowSource)?.[1];
+    expect(background).toBeDefined();
+    expect(css).toContain(`--bg: ${background};`);
   });
 });
 
@@ -58,10 +77,21 @@ describe('preload', () => {
       'getHealth',
       'listDepartments',
       'createDepartment',
+      'updateDepartment',
+      'deleteDepartment',
       'classifyTicket',
       'listTickets',
       'overrideTicket',
+      'getSettings',
+      'updateSettings',
+      'testConnection',
+      'listModels',
+      'getStorageInfo',
+      'saveOllamaToken',
+      'clearOllamaToken',
     ]);
+    // No getter for the token exists.
+    expect(text).not.toMatch(/getOllamaToken|loadToken|decrypt/);
     expect(text.match(/exposeInMainWorld/g)).toHaveLength(1);
   });
 });

@@ -1,6 +1,6 @@
-import { type TicketView } from '@ticket/shared';
+import { type Department, type TicketView } from '@ticket/shared';
 import { describe, expect, it } from 'vitest';
-import { ticketFields } from './screen.js';
+import { errorMessage, ticketFields, ticketRow } from './screen.js';
 
 const base = {
   id: '00000000-0000-4000-8000-000000000001',
@@ -10,6 +10,9 @@ const base = {
   channel: 'email',
   createdAt: '2026-01-01T00:00:00.000Z',
 } as const;
+
+const departments: Department[] = [{ id: 'billing', name: 'Billing', description: '', active: true }];
+const date = () => 'Jan 1';
 
 function ticket(status: TicketView['decision']['status'], departmentId: string | null): TicketView {
   return {
@@ -28,8 +31,43 @@ describe('ticketFields', () => {
     });
   });
 
-  it('applies no department for a needs_review result', () => {
+  it('applies no department for needs_review or failed, even with a department id present', () => {
     expect(ticketFields(ticket('needs_review', null)).department).toBeNull();
     expect(ticketFields(ticket('needs_review', 'billing')).department).toBeNull();
+    expect(ticketFields(ticket('failed', 'billing')).department).toBeNull();
+  });
+});
+
+describe('ticketRow', () => {
+  it('a labeled ticket shows its department name', () => {
+    expect(ticketRow(ticket('labeled', 'billing'), departments, date)).toEqual({
+      id: base.id,
+      subject: 'Invoice',
+      status: 'labeled',
+      statusLabel: 'Labeled',
+      department: 'Billing',
+      confidence: '91%',
+      channel: 'email',
+      created: 'Jan 1',
+    });
+  });
+
+  it('a needs_review ticket shows no department', () => {
+    const row = ticketRow(ticket('needs_review', 'billing'), departments, date);
+    expect(row.department).toBeNull();
+    expect(row.statusLabel).toBe('Needs review');
+  });
+
+  it('an overridden ticket shows its department, even after the department row is gone', () => {
+    expect(ticketRow(ticket('overridden', 'legacy'), departments, date).department).toBe('legacy');
+  });
+});
+
+describe('errorMessage', () => {
+  it('strips the Electron IPC prefix', () => {
+    const error = new Error(
+      "Error invoking remote method 'departments:delete': Error: This department cannot be removed.",
+    );
+    expect(errorMessage(error)).toBe('This department cannot be removed.');
   });
 });

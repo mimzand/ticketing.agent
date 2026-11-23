@@ -1,20 +1,43 @@
 import { classifyTicketText } from '@ticket/adk-runtime';
-import { type OllamaClient } from '@ticket/model-provider';
 import {
-  CLASSIFY_MIN_CONFIDENCE_DEFAULT,
+  canSendToken,
+  createOllamaClient,
+  OllamaError,
+  type OllamaClient,
+} from '@ticket/model-provider';
+import {
+  DEPARTMENT_IN_USE_MESSAGE,
+  SettingsPatchSchema,
   type ClassifyTicket,
+  type ConnectionTestRequest,
+  type ConnectionTestResult,
   type CreateDepartment,
   type Decision,
+  type DeleteDepartment,
+  type DeleteDepartmentResult,
   type Department,
   type ModelHealth,
+  type ModelList,
   type OverrideTicket,
+  type SettingsPatch,
+  type SettingsValues,
+  type SettingsView,
+  type StorageInfo,
   type TicketView,
+  type TokenState,
+  type UpdateDepartment,
 } from '@ticket/shared';
 import { type TicketDatabase } from '@ticket/storage';
+import { overriddenKeys, resolveSettings, type ResolvedSettings } from './settings.js';
 
-/** A request the host will not apply. The message names the rule, not the ticket text. */
+export type HostErrorCode = 'bad_request' | 'not_found' | 'conflict';
+
+/** A request the host will not apply. The message names the rule, not the ticket text or a token. */
 export class HostError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly code: HostErrorCode = 'bad_request',
+  ) {
     super(message);
     this.name = 'HostError';
   }
@@ -30,18 +53,53 @@ const FAILED: Decision = {
 export interface AgentHost {
   listDepartments(): readonly Department[];
   createDepartment(input: CreateDepartment): Department;
+  updateDepartment(input: UpdateDepartment): Department;
+  deleteDepartment(input: DeleteDepartment): DeleteDepartmentResult;
   classify(input: ClassifyTicket): Promise<TicketView>;
   listTickets(): readonly TicketView[];
   override(input: OverrideTicket): TicketView;
   modelHealth(): Promise<ModelHealth>;
+  getSettings(): SettingsView;
+  updateSettings(patch: SettingsPatch): SettingsView;
+  /** Kept in memory only. `null` clears it. Never stored, never returned. */
+  setToken(token: string | null): TokenState;
+  testConnection(input: ConnectionTestRequest): Promise<ConnectionTestResult>;
+  listModels(): Promise<ModelList>;
+  storageInfo(): StorageInfo;
 }
 
-export function createAgentHost(options: {
+export interface AgentHostOptions {
   readonly db: TicketDatabase;
-  readonly ollama: OllamaClient;
-  readonly minConfidence?: number;
-}): AgentHost {
-  const minConfidence = options.minConfidence ?? CLASSIFY_MIN_CONFIDENCE_DEFAULT;
+  /** OLLAMA_HOST, OLLAMA_MODEL, CLASSIFY_MIN_CONFIDENCE override saved settings; OLLAMA_TOKEN is a fallback token. */
+  readonly env?: NodeJS.ProcessEnv;
+  /** Shown read-only in Settings → Storage. */
+  readonly databasePath?: string;
+  /** Tests only. */
+  readonly fetch?: typeof fetch;
+}
+
+export function createAgentHost(options: AgentHostOptions): AgentHost {
+  const { db } = options;
+  const env = options.env ?? process.env;
+  const envToken = env['OLLAMA_TOKEN']?.trim() || undefined;
+  let shellToken: string | undefined;
+  const token = () => shellToken ?? envToken;
+
+  /** Read on every call, so a saved value applies to the next classify without a restart. */
+  const resolved = (): ResolvedSettings => resolveSettings(db.readSettings(), env);
+  const clientFor = (values: SettingsValues, baseUrl = values.ollamaBaseUrl, timeoutMs = values.connectTimeoutMs): OllamaClient =>
+    createOllamaClient(
+      {
+        baseUrl,
+        model: values.model,
+        token: token(),
+        timeoutMs,
+        generateTimeoutMs: values.classifyTimeoutMs,
+      },
+      options.fetch,
+    );
+  const view = (): SettingsView => ({ fields: resolved().fields, tokenSet: token() !== undefined });
+
   let tail: Promise<void> = Promise.resolve();
   const exclusive = <T>(run: () => Promise<T>): Promise<T> => {
     const result = tail.then(run, run);
@@ -53,35 +111,122 @@ export function createAgentHost(options: {
   };
 
   return {
-    listDepartments: () => options.db.listDepartments(),
+    listDepartments: () => db.listDepartments(),
     createDepartment(input) {
-      if (options.db.listDepartments().some((department) => department.id === input.id)) {
-        throw new HostError('A department with that id already exists.');
+      if (db.listDepartments().some((department) => department.id === input.id)) {
+        throw new HostError('A department with that id already exists.', 'conflict');
       }
-      return options.db.insertDepartment(input);
+      return db.insertDepartment(input);
     },
-    listTickets: () => options.db.listRecent(),
+    updateDepartment(input) {
+      const updated = db.updateDepartment(input);
+      if (!updated) throw new HostError('No department has that id.', 'not_found');
+      return updated;
+    },
+    deleteDepartment(input) {
+      const outcome = db.deleteDepartment(input.id);
+      if (outcome === 'missing') throw new HostError('No department has that id.', 'not_found');
+      if (outcome === 'referenced') throw new HostError(DEPARTMENT_IN_USE_MESSAGE, 'conflict');
+      return { id: input.id, deleted: true };
+    },
+    listTickets: () => db.listRecent(),
     override(input) {
-      const ticket = options.db.getById(input.id);
-      if (!ticket) throw new HostError('No such ticket.');
-      const department = options.db.listDepartments().find((item) => item.id === input.departmentId);
+      const ticket = db.getById(input.id);
+      if (!ticket) throw new HostError('No such ticket.', 'not_found');
+      const department = db.listDepartments().find((item) => item.id === input.departmentId);
       if (!department?.active) throw new HostError('That department is not active.');
-      options.db.saveDecision(ticket.id, {
+      db.saveDecision(ticket.id, {
         departmentId: department.id,
         confidence: ticket.decision.confidence,
         rationale: ticket.decision.rationale,
         status: 'overridden',
       });
-      const updated = options.db.getById(ticket.id);
-      if (!updated) throw new HostError('No such ticket.');
+      const updated = db.getById(ticket.id);
+      if (!updated) throw new HostError('No such ticket.', 'not_found');
       return updated;
     },
-    modelHealth: async () => ({
-      reachable: await options.ollama.checkReachable(),
-      model: options.ollama.config.model,
-    }),
-    classify: (input) => exclusive(() => classifyOnce(options.db, options.ollama, minConfidence, input)),
+    async modelHealth() {
+      const { values } = resolved();
+      return { reachable: await clientFor(values).checkReachable(), model: values.model };
+    },
+    classify: (input) =>
+      exclusive(() => {
+        const { values } = resolved();
+        return classifyOnce(db, clientFor(values), values.minConfidence, input);
+      }),
+
+    getSettings: view,
+    updateSettings(patch) {
+      const parsed = SettingsPatchSchema.safeParse(patch);
+      if (!parsed.success) {
+        throw new HostError(parsed.error.issues[0]?.message ?? 'Invalid setting.');
+      }
+      const current = resolved();
+      const blocked = overriddenKeys(current).filter((key) => key in parsed.data);
+      if (blocked.length > 0) {
+        const vars = blocked.map((key) => current.fields[key].envVar).join(', ');
+        throw new HostError(`Overridden by ${vars}; remove the variable to change it here.`);
+      }
+      db.writeSettings(parsed.data);
+      return view();
+    },
+    setToken(next) {
+      shellToken = next ?? undefined;
+      return { tokenSet: token() !== undefined };
+    },
+    async testConnection(input) {
+      const { values } = resolved();
+      const timeoutMs = input.timeoutMs ?? values.connectTimeoutMs;
+      // The URL comes from the form and is not saved. Same host rules as classify.
+      const baseUrl = input.baseUrl;
+      const tokenSent = token() !== undefined && canSendToken(baseUrl);
+      try {
+        const models = await clientFor(values, baseUrl, timeoutMs).listModels();
+        return {
+          ok: true,
+          message: `Connected. The server reports ${models.length} model${models.length === 1 ? '' : 's'}.`,
+          modelCount: models.length,
+          tokenSent,
+        };
+      } catch (error) {
+        return { ok: false, message: describeOllamaError(error), modelCount: null, tokenSent };
+      }
+    },
+    async listModels() {
+      const { values } = resolved();
+      try {
+        const models = await clientFor(values).listModels();
+        return { reachable: true, server: values.ollamaBaseUrl, models: [...models], message: '' };
+      } catch (error) {
+        return { reachable: false, server: values.ollamaBaseUrl, models: [], message: describeOllamaError(error) };
+      }
+    },
+    storageInfo() {
+      const counts = db.counts();
+      return {
+        databasePath: options.databasePath ?? '',
+        departmentCount: counts.departments,
+        ticketCount: counts.tickets,
+      };
+    },
   };
+}
+
+/** Fixed text per failure. Never the URL or the token. */
+function describeOllamaError(error: unknown): string {
+  if (!(error instanceof OllamaError)) return 'The server could not be checked.';
+  switch (error.code) {
+    case 'redirect':
+      return 'The server answered with a redirect. Redirects are not followed.';
+    case 'timeout':
+      return 'The server did not answer in time.';
+    case 'network':
+      return 'The server is not reachable.';
+    case 'http':
+      return error.message;
+    default:
+      return 'The server did not answer like Ollama.';
+  }
 }
 
 async function classifyOnce(
@@ -94,6 +239,7 @@ async function classifyOnce(
   if (stored) return stored;
 
   const created = db.insertTicket(input);
+  // The classifier sees only active departments.
   const active = db.listDepartments().filter((department) => department.active);
   let decision: Decision;
   try {
@@ -123,6 +269,6 @@ async function classifyOnce(
   }
   db.saveDecision(created.id, decision);
   const view = db.getById(created.id);
-  if (!view) throw new HostError('No such ticket.');
+  if (!view) throw new HostError('No such ticket.', 'not_found');
   return view;
 }

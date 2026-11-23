@@ -1,10 +1,20 @@
 import {
   type ClassifyTicket,
+  type ConnectionTestRequest,
+  type ConnectionTestResult,
   type CreateDepartment,
+  type DeleteDepartment,
+  type DeleteDepartmentResult,
   type Department,
   type ModelHealth,
+  type ModelList,
   type OverrideTicket,
+  type SettingsPatch,
+  type SettingsView,
+  type StorageInfo,
   type TicketView,
+  type TokenState,
+  type UpdateDepartment,
 } from '@ticket/shared';
 import {
   AGENT_LOOPBACK_HOST,
@@ -23,8 +33,10 @@ import {
   type Envelope,
   type HelloAck,
   type MethodName,
+  type ClientKind,
   type ParsedRequest,
   type ProtocolError,
+  type ProtocolErrorCode,
 } from '@ticket/agent-protocol';
 import { randomUUID } from 'node:crypto';
 import { createServer, type Socket } from 'node:net';
@@ -40,11 +52,22 @@ const MAX_CONNECTIONS = 16;
 export interface AgentCalls {
   listDepartments(): readonly Department[] | Promise<readonly Department[]>;
   createDepartment(input: CreateDepartment): Department | Promise<Department>;
+  updateDepartment(input: UpdateDepartment): Department | Promise<Department>;
+  deleteDepartment(input: DeleteDepartment): DeleteDepartmentResult | Promise<DeleteDepartmentResult>;
   classify(input: ClassifyTicket): Promise<TicketView>;
   listTickets(): readonly TicketView[] | Promise<readonly TicketView[]>;
   override(input: OverrideTicket): TicketView | Promise<TicketView>;
   modelHealth(): Promise<ModelHealth>;
+  getSettings(): SettingsView | Promise<SettingsView>;
+  updateSettings(patch: SettingsPatch): SettingsView | Promise<SettingsView>;
+  setToken(token: string | null): TokenState | Promise<TokenState>;
+  testConnection(input: ConnectionTestRequest): Promise<ConnectionTestResult>;
+  listModels(): Promise<ModelList>;
+  storageInfo(): StorageInfo | Promise<StorageInfo>;
 }
+
+/** HostError codes that travel as protocol codes; anything else is `bad_request`. */
+const HOST_ERROR_CODES: readonly ProtocolErrorCode[] = ['bad_request', 'not_found', 'conflict'];
 
 export interface AgentServerOptions {
   /** Token clients must present (AgentTokenSchema). */
@@ -128,6 +151,7 @@ interface ConnectionContext {
 function serveConnection(socket: Socket, ctx: ConnectionContext): void {
   const decoder = new FrameDecoder(HANDSHAKE_MAX_FRAME_BYTES);
   let authenticated = false;
+  let clientKind: ClientKind | undefined;
   let closing = false;
 
   const send = (envelope: Envelope) => {
@@ -181,7 +205,8 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
       agent: { pid: process.pid, version: ctx.agentVersion, startedAt: ctx.startedAt },
     };
     reply(hello.value.id, 'system.hello', ack);
-    ctx.log(`Client authenticated (${hello.value.hello.client.kind}).`);
+    clientKind = hello.value.hello.client.kind;
+    ctx.log(`Client authenticated (${clientKind}).`);
   };
 
   const dispatch = (request: ParsedRequest) => {
@@ -212,15 +237,44 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
             return reply(request.id, request.method, await requireCalls().listTickets());
           case 'tickets.override':
             return reply(request.id, request.method, await requireCalls().override(request.params));
+          case 'departments.update':
+            return reply(request.id, request.method, await requireCalls().updateDepartment(request.params));
+          case 'departments.delete':
+            return reply(request.id, request.method, await requireCalls().deleteDepartment(request.params));
+          case 'settings.get':
+            return reply(request.id, request.method, await requireCalls().getSettings());
+          case 'settings.update':
+            return reply(request.id, request.method, await requireCalls().updateSettings(request.params));
+          case 'settings.setToken':
+            // Only the desktop shell (which holds the safeStorage copy) may set the token.
+            // The HTTP API connects as `cli` and can never pass one through.
+            if (clientKind !== 'shell') {
+              return sendError(
+                request.id,
+                request.method,
+                protocolError('forbidden', 'Only the desktop shell can set the access token.'),
+              );
+            }
+            return reply(request.id, request.method, await requireCalls().setToken(request.params.token));
+          case 'settings.testConnection':
+            return reply(request.id, request.method, await requireCalls().testConnection(request.params));
+          case 'models.list':
+            return reply(request.id, request.method, await requireCalls().listModels());
+          case 'storage.info':
+            return reply(request.id, request.method, await requireCalls().storageInfo());
           default:
             return undefined;
         }
       } catch (error) {
         const host = error instanceof Error && error.name === 'HostError';
+        const hostCode = host ? (error as Error & { code?: unknown }).code : undefined;
+        const code: ProtocolErrorCode = host
+          ? HOST_ERROR_CODES.find((c) => c === hostCode) ?? 'bad_request'
+          : 'internal';
         sendError(
           request.id,
           request.method,
-          protocolError(host ? 'bad_request' : 'internal', host ? error.message : 'The request failed.'),
+          protocolError(code, host ? error.message : 'The request failed.'),
         );
       }
     })();

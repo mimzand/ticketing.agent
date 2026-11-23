@@ -19,6 +19,13 @@ export interface OllamaConfig {
   /** Sent only over HTTPS or to a loopback host. */
   readonly token: string | undefined;
   readonly timeoutMs: number;
+  /** Limit for one classify (chat) request. Defaults to OLLAMA_GENERATE_TIMEOUT_MS. */
+  readonly generateTimeoutMs?: number;
+}
+
+export interface OllamaModelInfo {
+  readonly name: string;
+  readonly size: number | null;
 }
 
 /** `http:` or `https:` only, with no userinfo, query, or fragment. */
@@ -65,6 +72,8 @@ export interface OllamaClient {
   readonly config: OllamaConfig;
   /** GET /api/tags. False when the server cannot be reached. */
   checkReachable(signal?: AbortSignal): Promise<boolean>;
+  /** GET /api/tags. Throws OllamaError when the server cannot be reached or answers badly. */
+  listModels(signal?: AbortSignal): Promise<readonly OllamaModelInfo[]>;
   /** One non-streaming JSON chat completion. The text is the assistant message. */
   generate(input: { readonly system: string; readonly user: string }, signal?: AbortSignal): Promise<string>;
 }
@@ -105,6 +114,20 @@ export function createOllamaClient(config: OllamaConfig, fetchImpl: typeof fetch
         return false;
       }
     },
+    async listModels(signal) {
+      const response = await request('/api/tags', { method: 'GET' }, signal);
+      if (!response.ok) throw new OllamaError('http', `Ollama returned HTTP ${response.status}.`);
+      const body = (await response.json().catch(() => null)) as { models?: unknown } | null;
+      if (!body || !Array.isArray(body.models)) {
+        throw new OllamaError('invalid-response', 'Ollama returned no model list.');
+      }
+      return body.models.flatMap((item: unknown) => {
+        if (typeof item !== 'object' || item === null) return [];
+        const { name, size } = item as { name?: unknown; size?: unknown };
+        if (typeof name !== 'string' || name.length === 0 || name.length > 256) return [];
+        return [{ name, size: typeof size === 'number' && Number.isFinite(size) ? size : null }];
+      });
+    },
     async generate(input, signal) {
       const response = await request(
         '/api/chat',
@@ -122,7 +145,7 @@ export function createOllamaClient(config: OllamaConfig, fetchImpl: typeof fetch
           }),
         },
         signal,
-        OLLAMA_GENERATE_TIMEOUT_MS,
+        config.generateTimeoutMs ?? OLLAMA_GENERATE_TIMEOUT_MS,
       );
       if (!response.ok) throw new OllamaError('http', `Ollama returned HTTP ${response.status}.`);
       const body = (await response.json()) as { message?: { content?: unknown } };

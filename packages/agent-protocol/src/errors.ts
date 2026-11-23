@@ -15,6 +15,12 @@ export const PROTOCOL_ERROR_CODES = [
   'unsupported_version',
   /** The method is not in the registry. */
   'unknown_method',
+  /** The request names a row that does not exist. */
+  'not_found',
+  /** The request breaks a rule about existing data (e.g. a department still in use). */
+  'conflict',
+  /** This client kind may not call the method (e.g. only the desktop shell sets the token). */
+  'forbidden',
   'timeout',
   'internal',
 ] as const;

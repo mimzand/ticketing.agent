@@ -19,6 +19,7 @@
     "@ticket/adk-runtime": "workspace:*",
     "@ticket/model-provider": "workspace:*",
     "@ticket/shared": "workspace:*",
-    "@ticket/storage": "workspace:*"
+    "@ticket/storage": "workspace:*",
+    "zod": "4.6.7"
   }
 }

@@ -22,6 +22,36 @@ export const CreateDepartmentSchema = z.strictObject({
 });
 export type CreateDepartment = z.infer<typeof CreateDepartmentSchema>;
 
+/**
+ * Edit a department. `id` selects the row and cannot change: decisions store it.
+ * Name, description, and active are optional; at least one is required.
+ */
+export const UpdateDepartmentSchema = z
+  .strictObject({
+    id: DepartmentIdSchema,
+    name: z.string().trim().min(1).max(120).optional(),
+    description: z.string().trim().max(2_000).optional(),
+    active: z.boolean().optional(),
+  })
+  .refine(
+    (input) => input.name !== undefined || input.description !== undefined || input.active !== undefined,
+    'Change the name, the description, or active.',
+  );
+export type UpdateDepartment = z.infer<typeof UpdateDepartmentSchema>;
+
+export const DeleteDepartmentSchema = z.strictObject({ id: DepartmentIdSchema });
+export type DeleteDepartment = z.infer<typeof DeleteDepartmentSchema>;
+
+export const DeleteDepartmentResultSchema = z.strictObject({
+  id: DepartmentIdSchema,
+  deleted: z.literal(true),
+});
+export type DeleteDepartmentResult = z.infer<typeof DeleteDepartmentResultSchema>;
+
+/** The refusal text when a decision still references a department. */
+export const DEPARTMENT_IN_USE_MESSAGE =
+  'This department cannot be removed: a ticket decision references its id, and decisions are never rewritten. Deactivate it instead.';
+
 export const ClassifyTicketSchema = z.strictObject({
   externalId: z.string().trim().min(1).max(200),
   subject: z.string().trim().min(1).max(300),

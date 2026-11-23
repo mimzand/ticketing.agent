@@ -1381,6 +1381,7 @@ __metadata:
     "@ticket/model-provider": "workspace:*"
     "@ticket/shared": "workspace:*"
     "@ticket/storage": "workspace:*"
+    zod: "npm:4.6.7"
   languageName: unknown
   linkType: soft
 
@@ -1399,7 +1400,6 @@ __metadata:
   dependencies:
     "@ticket/agent-host": "workspace:*"
     "@ticket/agent-protocol": "workspace:*"
-    "@ticket/model-provider": "workspace:*"
     "@ticket/shared": "workspace:*"
     "@ticket/storage": "workspace:*"
     tsx: "npm:4.23.15"
@@ -1431,6 +1431,7 @@ __metadata:
     vite: "npm:8.3.8"
     vue: "npm:3.5.46"
     vue-tsc: "npm:3.3.14"
+    zod: "npm:4.6.7"
   languageName: unknown
   linkType: soft
 

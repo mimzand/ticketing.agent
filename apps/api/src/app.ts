@@ -1,7 +1,15 @@
 import { type AgentLink } from '@ticket/agent-client';
 import { ApiHealthSchema, type ApiHealth } from '@ticket/shared';
 import { Hono } from 'hono';
-import { classifyTicket, createDepartment, listDepartments, listTickets, overrideTicket } from './routes.js';
+import {
+  classifyTicket,
+  createDepartment,
+  deleteDepartment,
+  listDepartments,
+  listTickets,
+  overrideTicket,
+  updateDepartment,
+} from './routes.js';
 import { apiKeyAuth } from './security.js';
 
 /** How long `/health` waits for the agent. */
@@ -67,6 +75,14 @@ export function createApiApp(deps: ApiDeps): Hono {
   });
   app.post('/v1/departments', async (c) => {
     const result = await createDepartment(c, deps.agent);
+    return c.json(result.body, result.status);
+  });
+  app.patch('/v1/departments/:id', async (c) => {
+    const result = await updateDepartment(c, deps.agent, c.req.param('id'));
+    return c.json(result.body, result.status);
+  });
+  app.delete('/v1/departments/:id', async (c) => {
+    const result = await deleteDepartment(deps.agent, c.req.param('id'));
     return c.json(result.body, result.status);
   });
   app.post('/v1/tickets:classify', async (c) => {

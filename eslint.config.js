@@ -114,7 +114,9 @@ export default defineConfig(
     ],
     languageOptions: { globals: globals.node },
   },
-  { files: ['apps/desktop/src/renderer/**/*.{ts,vue}'], languageOptions: { globals: globals.browser } },
+  { files: ['apps/desktop/src/renderer/**/*.{ts,vue,js}'], languageOptions: { globals: globals.browser } },
+  // The theme boot file is a classic <script> that runs before the first paint.
+  { files: ['apps/desktop/src/renderer/public/**/*.js'], languageOptions: { sourceType: 'script' } },
 
   // ---------------------------------------------------------------- packages
 
@@ -257,7 +259,7 @@ export default defineConfig(
   }),
 
   // Renderer: browser code, @ticket/shared only, reaches main only through window.api.
-  boundary(['apps/desktop/src/renderer/**/*.{ts,vue}'], {
+  boundary(['apps/desktop/src/renderer/**/*.{ts,vue,js}'], {
     paths: [
       ...nodeBan('The renderer has no Node.').paths,
       ELECTRON('The renderer uses window.api (preload bridge).'),

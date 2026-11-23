@@ -136,3 +136,49 @@ describe('tokensEqual', () => {
     expect(tokensEqual(generateToken(), token)).toBe(false);
   });
 });
+
+describe('settings.setToken', () => {
+  const ollamaToken = 'ollama_' + 'z'.repeat(40);
+  const received: (string | null)[] = [];
+  const calls = {
+    setToken: (value: string | null) => {
+      received.push(value);
+      return { tokenSet: value !== null };
+    },
+  } as unknown as NonNullable<Parameters<typeof startAgentServer>[0]['calls']>;
+
+  const helloAs = (kind: 'shell' | 'cli'): Envelope => ({
+    id: 'h1',
+    kind: 'req',
+    method: 'system.hello',
+    payload: { protocol: PROTOCOL_NAME, version: PROTOCOL_VERSION, token, client: { kind, version: '0.0.0' } },
+  });
+  const setToken: Envelope = { id: 's1', kind: 'req', method: 'settings.setToken', payload: { token: ollamaToken } };
+
+  it('is refused for a cli client such as the HTTP API', async () => {
+    received.length = 0;
+    server = await startAgentServer({ token, agentVersion: '0.1.0', calls });
+    const p = await probe(server.port);
+    p.send(helloAs('cli'));
+    await p.next();
+    p.send(setToken);
+    const answer = await p.next();
+    expect(answer).toMatchObject({ kind: 'error', payload: { code: 'forbidden' } });
+    expect(JSON.stringify(answer)).not.toContain(ollamaToken);
+    expect(received).toEqual([]);
+    p.socket.destroy();
+  });
+
+  it('is accepted from the desktop shell and answers only whether a token is set', async () => {
+    received.length = 0;
+    server = await startAgentServer({ token, agentVersion: '0.1.0', calls });
+    const p = await probe(server.port);
+    p.send(helloAs('shell'));
+    await p.next();
+    p.send(setToken);
+    const answer = await p.next();
+    expect(answer).toEqual({ id: 's1', kind: 'res', method: 'settings.setToken', payload: { tokenSet: true } });
+    expect(received).toEqual([ollamaToken]);
+    p.socket.destroy();
+  });
+});

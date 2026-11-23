@@ -1,5 +1,16 @@
 import {
   AgentPingSchema,
+  ConnectionTestRequestSchema,
+  ConnectionTestResultSchema,
+  DeleteDepartmentResultSchema,
+  DeleteDepartmentSchema,
+  ModelListSchema,
+  SetOllamaTokenSchema,
+  SettingsPatchSchema,
+  SettingsViewSchema,
+  StorageInfoSchema,
+  TokenStateSchema,
+  UpdateDepartmentSchema,
   ClassifyTicketSchema,
   CreateDepartmentSchema,
   DepartmentSchema,
@@ -25,9 +36,18 @@ export const PROTOCOL_METHODS = {
   'model.health': { params: NoParamsSchema, result: ModelHealthSchema },
   'departments.list': { params: NoParamsSchema, result: z.array(DepartmentSchema) },
   'departments.create': { params: CreateDepartmentSchema, result: DepartmentSchema },
+  'departments.update': { params: UpdateDepartmentSchema, result: DepartmentSchema },
+  'departments.delete': { params: DeleteDepartmentSchema, result: DeleteDepartmentResultSchema },
   'tickets.classify': { params: ClassifyTicketSchema, result: TicketViewSchema },
   'tickets.list': { params: NoParamsSchema, result: z.array(TicketViewSchema) },
   'tickets.override': { params: OverrideTicketSchema, result: TicketViewSchema },
+  'settings.get': { params: NoParamsSchema, result: SettingsViewSchema },
+  'settings.update': { params: SettingsPatchSchema, result: SettingsViewSchema },
+  /** Shell only. The token stays in the agent's memory; the result says only whether one is set. */
+  'settings.setToken': { params: SetOllamaTokenSchema, result: TokenStateSchema },
+  'settings.testConnection': { params: ConnectionTestRequestSchema, result: ConnectionTestResultSchema },
+  'models.list': { params: NoParamsSchema, result: ModelListSchema },
+  'storage.info': { params: NoParamsSchema, result: StorageInfoSchema },
 } as const satisfies Record<string, { params: z.ZodType; result: z.ZodType }>;
 
 export type MethodName = keyof typeof PROTOCOL_METHODS;
