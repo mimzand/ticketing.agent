@@ -4,6 +4,15 @@ out/
 coverage/
 *.tsbuildinfo
 
+# Yarn 4 (Corepack provides Yarn itself; no committed release)
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+.pnp.*
+
 .env
 .env.*
 !.env.example

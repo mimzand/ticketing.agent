@@ -1,0 +1,24 @@
+{
+  "name": "@ticket/agent-host",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Composes storage, the Ollama client, and the ADK classifier. No Electron.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ticket/adk-runtime": "workspace:*",
+    "@ticket/model-provider": "workspace:*",
+    "@ticket/shared": "workspace:*",
+    "@ticket/storage": "workspace:*"
+  }
+}

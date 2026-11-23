@@ -1,0 +1,27 @@
+{
+  "name": "@ticket/desktop",
+  "productName": "Ticketing Agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Electron shell: main process, preload bridge, and Vue renderer. Connects to a running agent; never calls the HTTP API.",
+  "type": "module",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "postinstall": "install-electron",
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc -p tsconfig.node.json && vue-tsc -p tsconfig.web.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@ticket/agent-client": "workspace:*",
+    "@ticket/shared": "workspace:*",
+    "@vitejs/plugin-vue": "6.0.11",
+    "electron": "45.4.1",
+    "electron-vite": "6.0.0",
+    "typescript": "6.0.3",
+    "vite": "8.3.8",
+    "vue": "3.5.46",
+    "vue-tsc": "3.3.14"
+  }
+}

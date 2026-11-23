@@ -1,0 +1,22 @@
+{
+  "name": "@ticket/agent-protocol",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Loopback protocol between the agent and its clients: frames, envelopes, handshake, method registry. No Node APIs.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ticket/shared": "workspace:*",
+    "zod": "4.6.7"
+  }
+}

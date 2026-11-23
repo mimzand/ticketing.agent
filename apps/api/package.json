@@ -1,0 +1,27 @@
+{
+  "name": "@ticket/api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "HTTP API (Hono on 127.0.0.1:8787). Reaches the agent only through @ticket/agent-client. No database, no ADK, no Electron.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "dev": "tsx src/main.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.1.11",
+    "@ticket/agent-client": "workspace:*",
+    "@ticket/shared": "workspace:*",
+    "hono": "4.13.20"
+  },
+  "devDependencies": {
+    "tsx": "4.23.15"
+  }
+}

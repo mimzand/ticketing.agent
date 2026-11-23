@@ -1,0 +1,21 @@
+{
+  "name": "@ticket/model-provider",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Ollama HTTP client. No tool calling, no cloud models.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ticket/shared": "workspace:*"
+  }
+}

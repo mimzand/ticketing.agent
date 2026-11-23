@@ -1,0 +1,24 @@
+{
+  "name": "@ticket/adk-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Google ADK boundary for the ticket classifier. Ollama only. No tools, no code execution, no session database.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@google/adk": "2.4.0",
+    "@ticket/model-provider": "workspace:*",
+    "@ticket/shared": "workspace:*",
+    "zod": "4.6.7"
+  }
+}

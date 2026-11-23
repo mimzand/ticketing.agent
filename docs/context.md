@@ -91,6 +91,7 @@ The first message on a connection is `system.hello` (protocol name, version, tok
 | Method | Purpose |
 | --- | --- |
 | `system.ping` | liveness: pid, version, protocol version |
+| `model.health` | whether Ollama is reachable, and the configured model name |
 | `departments.list` | every department |
 | `departments.create` | `id`, `name`, `description` |
 | `tickets.classify` | store the ticket and return the decision; the same `externalId` returns the stored decision |
@@ -131,7 +132,7 @@ Hono on `127.0.0.1:8787` (`API_HOST`, `API_PORT`). Each route forwards to the me
 
 `X-API-Key` or `Authorization: Bearer`, compared in constant time on a digest, as in `apps/api/src/security.ts`. On loopback, generate a key for the API process when `API_KEY` is unset and print it once. Responses never include the agent token or the Ollama token.
 
-`GET /health` returns `{ "ok": true, "service": "ticket-api", "agent": "connected" | "unavailable" }`. From phase 2 it also reports whether Ollama is reachable and the configured model name, by asking the agent. The API learns that the agent is up by `system.ping`.
+`GET /health` returns `{ "ok": true, "service": "ticket-api", "agent": "connected" | "unavailable", "ollama": "reachable" | "unreachable", "model": "<name, or empty>" }`. The API learns that the agent is up by `system.ping`, then asks `model.health`. `model` is empty when the agent cannot be asked.
 
 ## Desktop shell
 

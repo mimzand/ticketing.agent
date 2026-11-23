@@ -1,0 +1,28 @@
+{
+  "name": "@ticket/agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agent service: serves @ticket/agent-protocol on 127.0.0.1 and writes the state file. Runs without Electron.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "dev": "tsx src/main.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ticket/agent-host": "workspace:*",
+    "@ticket/agent-protocol": "workspace:*",
+    "@ticket/model-provider": "workspace:*",
+    "@ticket/shared": "workspace:*",
+    "@ticket/storage": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "4.23.15"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "@ticket/agent-client",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Node client of the agent: state-file lookup, handshake, typed requests. Used by Electron main and apps/api. No Electron.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ticket/agent-protocol": "workspace:*",
+    "@ticket/shared": "workspace:*"
+  }
+}

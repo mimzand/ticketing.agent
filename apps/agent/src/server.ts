@@ -1,0 +1,255 @@
+import {
+  type ClassifyTicket,
+  type CreateDepartment,
+  type Department,
+  type ModelHealth,
+  type OverrideTicket,
+  type TicketView,
+} from '@ticket/shared';
+import {
+  AGENT_LOOPBACK_HOST,
+  AgentTokenSchema,
+  encodeFrame,
+  FrameDecoder,
+  HANDSHAKE_TIMEOUT_MS,
+  MAX_FRAME_BYTES,
+  parseHello,
+  parseRequest,
+  parseResult,
+  protocolError,
+  PROTOCOL_NAME,
+  PROTOCOL_VERSION,
+  UNATTRIBUTED_ERROR_METHOD,
+  type Envelope,
+  type HelloAck,
+  type MethodName,
+  type ParsedRequest,
+  type ProtocolError,
+} from '@ticket/agent-protocol';
+import { randomUUID } from 'node:crypto';
+import { createServer, type Socket } from 'node:net';
+import { tokensEqual } from './token.js';
+
+/** Frame limit before the handshake. A hello is a few hundred bytes. */
+export const HANDSHAKE_MAX_FRAME_BYTES = 16 * 1024;
+/** How long a rejected client gets to read the error before the socket is destroyed. */
+const CLOSE_GRACE_MS = 1_000;
+const MAX_CONNECTIONS = 16;
+
+/** Domain operations the protocol server forwards after the handshake. */
+export interface AgentCalls {
+  listDepartments(): readonly Department[] | Promise<readonly Department[]>;
+  createDepartment(input: CreateDepartment): Department | Promise<Department>;
+  classify(input: ClassifyTicket): Promise<TicketView>;
+  listTickets(): readonly TicketView[] | Promise<readonly TicketView[]>;
+  override(input: OverrideTicket): TicketView | Promise<TicketView>;
+  modelHealth(): Promise<ModelHealth>;
+}
+
+export interface AgentServerOptions {
+  /** Token clients must present (AgentTokenSchema). */
+  readonly token: string;
+  /** 0 (default) picks an ephemeral port. */
+  readonly port?: number;
+  readonly agentVersion: string;
+  /** Tests only; defaults to HANDSHAKE_TIMEOUT_MS (5 s). */
+  readonly handshakeTimeoutMs?: number;
+  /** Absent only in handshake tests. Ticket methods then answer `internal`. */
+  readonly calls?: AgentCalls;
+  /** Never receives the token. */
+  readonly log?: (message: string) => void;
+}
+
+export interface AgentServer {
+  readonly host: typeof AGENT_LOOPBACK_HOST;
+  readonly port: number;
+  readonly startedAt: string;
+  close(): Promise<void>;
+}
+
+/** Starts the protocol server on 127.0.0.1 only. */
+export async function startAgentServer(options: AgentServerOptions): Promise<AgentServer> {
+  if (!AgentTokenSchema.safeParse(options.token).success) {
+    throw new Error('The agent token does not meet AgentTokenSchema.');
+  }
+  const log = options.log ?? (() => undefined);
+  const startedAt = new Date().toISOString();
+  const sockets = new Set<Socket>();
+  const ctx: ConnectionContext = {
+    token: options.token,
+    agentVersion: options.agentVersion,
+    calls: options.calls,
+    startedAt,
+    handshakeTimeoutMs: options.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS,
+    log,
+  };
+
+  const server = createServer((socket) => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+    serveConnection(socket, ctx);
+  });
+  server.maxConnections = MAX_CONNECTIONS;
+
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen({ host: AGENT_LOOPBACK_HOST, port: options.port ?? 0, exclusive: true }, () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+  const address = server.address();
+  if (address === null || typeof address === 'string') {
+    server.close();
+    throw new Error('The agent server has no TCP address.');
+  }
+
+  return {
+    host: AGENT_LOOPBACK_HOST,
+    port: address.port,
+    startedAt,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.close(() => resolve());
+        for (const socket of sockets) socket.destroy();
+      }),
+  };
+}
+
+interface ConnectionContext {
+  readonly token: string;
+  readonly agentVersion: string;
+  readonly calls: AgentCalls | undefined;
+  readonly startedAt: string;
+  readonly handshakeTimeoutMs: number;
+  readonly log: (message: string) => void;
+}
+
+function serveConnection(socket: Socket, ctx: ConnectionContext): void {
+  const decoder = new FrameDecoder(HANDSHAKE_MAX_FRAME_BYTES);
+  let authenticated = false;
+  let closing = false;
+
+  const send = (envelope: Envelope) => {
+    if (!socket.destroyed) socket.write(encodeFrame(envelope));
+  };
+  const sendError = (id: string, method: string, error: ProtocolError) =>
+    send({ id, kind: 'error', method, payload: error });
+
+  /** Sends a final error, then closes. Used for every handshake and framing failure. */
+  const reject = (id: string, method: string, error: ProtocolError) => {
+    if (closing) return;
+    closing = true;
+    clearTimeout(handshakeTimer);
+    ctx.log(`Connection rejected: ${error.code}.`);
+    if (!socket.destroyed) socket.end(encodeFrame({ id, kind: 'error', method, payload: error }));
+    setTimeout(() => socket.destroy(), CLOSE_GRACE_MS).unref();
+  };
+
+  const handshakeTimer = setTimeout(
+    () =>
+      reject(
+        randomUUID(),
+        UNATTRIBUTED_ERROR_METHOD,
+        protocolError('unauthorized', 'Handshake timed out.'),
+      ),
+    ctx.handshakeTimeoutMs,
+  );
+  handshakeTimer.unref();
+
+  const reply = (id: string, method: MethodName, result: unknown) => {
+    const checked = parseResult(method, result);
+    if (!checked.ok) {
+      ctx.log(`Refusing to send an invalid ${method} result.`);
+      return sendError(id, method, protocolError('internal', 'Invalid result.'));
+    }
+    send({ id, kind: 'res', method, payload: checked.value });
+  };
+
+  const handshake = (envelope: Envelope) => {
+    const hello = parseHello(envelope);
+    if (!hello.ok) return reject(envelope.id, envelope.method, hello.error);
+    if (!tokensEqual(hello.value.hello.token, ctx.token)) {
+      return reject(envelope.id, envelope.method, protocolError('unauthorized', 'Invalid token.'));
+    }
+    clearTimeout(handshakeTimer);
+    authenticated = true;
+    decoder.maxFrameBytes = MAX_FRAME_BYTES;
+    const ack: HelloAck = {
+      protocol: PROTOCOL_NAME,
+      version: PROTOCOL_VERSION,
+      agent: { pid: process.pid, version: ctx.agentVersion, startedAt: ctx.startedAt },
+    };
+    reply(hello.value.id, 'system.hello', ack);
+    ctx.log(`Client authenticated (${hello.value.hello.client.kind}).`);
+  };
+
+  const dispatch = (request: ParsedRequest) => {
+    void (async () => {
+      try {
+        switch (request.method) {
+          case 'system.ping':
+            return reply(request.id, request.method, {
+              pid: process.pid,
+              version: ctx.agentVersion,
+              protocolVersion: PROTOCOL_VERSION,
+            });
+          case 'system.hello':
+            return sendError(
+              request.id,
+              request.method,
+              protocolError('bad_request', 'Already authenticated.'),
+            );
+          case 'model.health':
+            return reply(request.id, request.method, await requireCalls().modelHealth());
+          case 'departments.list':
+            return reply(request.id, request.method, await requireCalls().listDepartments());
+          case 'departments.create':
+            return reply(request.id, request.method, await requireCalls().createDepartment(request.params));
+          case 'tickets.classify':
+            return reply(request.id, request.method, await requireCalls().classify(request.params));
+          case 'tickets.list':
+            return reply(request.id, request.method, await requireCalls().listTickets());
+          case 'tickets.override':
+            return reply(request.id, request.method, await requireCalls().override(request.params));
+          default:
+            return undefined;
+        }
+      } catch (error) {
+        const host = error instanceof Error && error.name === 'HostError';
+        sendError(
+          request.id,
+          request.method,
+          protocolError(host ? 'bad_request' : 'internal', host ? error.message : 'The request failed.'),
+        );
+      }
+    })();
+  };
+
+  const requireCalls = (): AgentCalls => {
+    if (!ctx.calls) throw new Error('The agent has no domain calls.');
+    return ctx.calls;
+  };
+
+  const handle = (envelope: Envelope) => {
+    if (envelope.kind !== 'req') {
+      ctx.log(`Ignoring an unsolicited ${envelope.kind}.`);
+      return;
+    }
+    const request = parseRequest(envelope);
+    if (!request.ok) return sendError(envelope.id, envelope.method, request.error);
+    dispatch(request.value);
+  };
+
+  socket.on('data', (chunk: Buffer) => {
+    if (closing) return;
+    for (const result of decoder.push(chunk)) {
+      if (!result.ok) return reject(randomUUID(), UNATTRIBUTED_ERROR_METHOD, result.error);
+      if (authenticated) handle(result.value);
+      else handshake(result.value);
+      if (closing) return;
+    }
+  });
+  socket.on('error', () => socket.destroy());
+  socket.on('close', () => clearTimeout(handshakeTimer));
+}
