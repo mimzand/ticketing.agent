@@ -75,6 +75,10 @@ loopback address. `OLLAMA_TOKEN` in the agent's environment still works as a fal
 curl http://127.0.0.1:8787/health
 # {"ok":true,"service":"ticket-api","agent":"connected","ollama":"reachable","model":"qwen3:8b"}
 
+# Swagger UI and the OpenAPI document are public:
+# http://127.0.0.1:8787/docs
+# http://127.0.0.1:8787/openapi.json
+
 curl -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" -d "{\"externalId\":\"ext-1\",\"subject\":\"Invoice\",\"body\":\"Please review.\",\"channel\":\"email\"}" http://127.0.0.1:8787/v1/tickets:classify
 ```
 
@@ -98,7 +102,7 @@ packages/shared          Zod schemas shared by every process (no Node, no Electr
 packages/agent-protocol  frames, envelopes, handshake, method registry (no Node APIs)
 packages/agent-client    state-file lookup, handshake, typed requests (no Electron)
 apps/agent               the agent service (no Electron)
-apps/api                 Hono HTTP API, reaches the agent only through @ticket/agent-client
+apps/api                 Hono HTTP API and Swagger UI, reaches the agent only through @ticket/agent-client
 packages/storage         SQLite departments, tickets, decisions
 packages/model-provider  Ollama HTTP client
 packages/adk-runtime     ADK boundary and OllamaLlm

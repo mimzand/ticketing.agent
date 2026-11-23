@@ -124,8 +124,9 @@ Hono on `127.0.0.1:8787` (`API_HOST`, `API_PORT`). Each route forwards to the me
 
 | Method | Path | Auth |
 | --- | --- | --- |
-| `GET` | `/health` | public |
+| `GET` | `/health`, `/docs`, `/openapi.json` | public |
 | `GET` `POST` | `/v1/departments` | API key |
+| `PATCH` `DELETE` | `/v1/departments/{id}` | API key |
 | `POST` | `/v1/tickets:classify` | API key |
 | `GET` | `/v1/tickets` | API key |
 | `POST` | `/v1/tickets/{id}/override` | API key |
@@ -133,6 +134,8 @@ Hono on `127.0.0.1:8787` (`API_HOST`, `API_PORT`). Each route forwards to the me
 `X-API-Key` or `Authorization: Bearer`, compared in constant time on a digest, as in `apps/api/src/security.ts`. On loopback, generate a key for the API process when `API_KEY` is unset and print it once. Responses never include the agent token or the Ollama token.
 
 `GET /health` returns `{ "ok": true, "service": "ticket-api", "agent": "connected" | "unavailable", "ollama": "reachable" | "unreachable", "model": "<name, or empty>" }`. The API learns that the agent is up by `system.ping`, then asks `model.health`. `model` is empty when the agent cannot be asked.
+
+`GET /openapi.json` is OpenAPI 3.1 generated from the same Zod schemas the routes parse. `GET /docs` is Swagger UI served from `swagger-ui-dist` (no CDN). Both are public. The page does not store the API key.
 
 ## Desktop shell
 
@@ -161,11 +164,11 @@ The main process reads `AGENT_STATE_FILE`, connects with `@ticket/agent-client` 
 
 ## Out of v1
 
-Research, chat, a tools package, the legacy runtime, an engine flag, an in-process agent mode, an Electron utility-process supervisor, reverse calls into the shell, `safeStorage`, code execution, `dockerode`, OpenAPI/Swagger, rate limits, CORS lists, pagination, idempotency-key conflicts, a second UI package. Do not build these unless a prompt asks for them.
+Research, chat, a tools package, the legacy runtime, an engine flag, an in-process agent mode, an Electron utility-process supervisor, reverse calls into the shell, code execution, `dockerode`, rate limits, CORS lists, pagination, idempotency-key conflicts, a second UI package. Do not build these unless a prompt asks for them. OpenAPI/Swagger and `safeStorage` for the Ollama token are in.
 
 ## Later
 
-Evidence quotes, department examples and aliases, taxonomy versions, OpenAPI/Swagger, spawning the agent from Electron on this same protocol, a settings screen with `safeStorage`, abort end to end, crash recovery, log redaction tests, rate limit, CORS.
+Evidence quotes, department examples and aliases, taxonomy versions, spawning the agent from Electron on this same protocol, abort end to end, crash recovery, log redaction tests, rate limit, CORS.
 
 ---
 

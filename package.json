@@ -22,6 +22,9 @@
     "lint": "eslint . --max-warnings=0"
   },
   "dependenciesMeta": {
+    "@scarf/scarf": {
+      "built": false
+    },
     "better-sqlite3": {
       "built": false
     },

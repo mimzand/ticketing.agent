@@ -9,7 +9,10 @@ const digest = (value: string) => createHash('sha256').update(value, 'utf8').dig
 export function apiKeyAuth(apiKey: string): MiddlewareHandler {
   const expected = digest(apiKey);
   return async (c, next) => {
-    if (c.req.path === '/health') return next();
+    const path = c.req.path;
+    if (path === '/health' || path === '/openapi.json' || path === '/docs' || path.startsWith('/docs/')) {
+      return next();
+    }
     const header = c.req.header(API_KEY_HEADER);
     const bearer = /^Bearer\s+(.+)$/i.exec(c.req.header('authorization') ?? '')?.[1];
     const given = (header ?? bearer)?.trim();

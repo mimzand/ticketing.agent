@@ -1343,6 +1343,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@scarf/scarf@npm:=1.4.0":
+  version: 1.4.0
+  resolution: "@scarf/scarf@npm:1.4.0"
+  checksum: 10c0/332118bb488e7a70eaad068fb1a33f016d30442fb0498b37a80cb425c1e741853a5de1a04dce03526ed6265481ecf744aa6e13f072178d19e6b94b19f623ae1c
+  languageName: node
+  linkType: hard
+
 "@so-ric/colorspace@npm:^1.1.6":
   version: 1.1.6
   resolution: "@so-ric/colorspace@npm:1.1.6"
@@ -1414,7 +1421,9 @@ __metadata:
     "@ticket/agent-client": "workspace:*"
     "@ticket/shared": "workspace:*"
     hono: "npm:4.13.20"
+    swagger-ui-dist: "npm:5.34.1"
     tsx: "npm:4.23.15"
+    zod: "npm:4.6.7"
   languageName: unknown
   linkType: soft
 
@@ -4159,6 +4168,8 @@ __metadata:
     vitest: "npm:5.1.1"
     vue-eslint-parser: "npm:10.4.1"
   dependenciesMeta:
+    "@scarf/scarf":
+      built: false
     better-sqlite3:
       built: false
     electron:
@@ -4447,6 +4458,15 @@ __metadata:
   dependencies:
     debug: "npm:^4.1.0"
   checksum: 10c0/43c387be9dfe22dbeaf39dfa4ffb279847aeb37a42a8988c0b066f548bbd209aa8c65e03da29f2b29be1a66b577801bf89fff0007df4183db2f286263a9569e5
+  languageName: node
+  linkType: hard
+
+"swagger-ui-dist@npm:5.34.1":
+  version: 5.34.1
+  resolution: "swagger-ui-dist@npm:5.34.1"
+  dependencies:
+    "@scarf/scarf": "npm:=1.4.0"
+  checksum: 10c0/e840abba4c177facbc14d8e2f696aad36d951a94b8ec67e5affbf127bbb8dc31ba03bc6539877cb0f8a38626d9e8c6c01769025b08970076aa34429d41f244cd
   languageName: node
   linkType: hard
 

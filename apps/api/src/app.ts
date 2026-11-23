@@ -1,6 +1,8 @@
 import { type AgentLink } from '@ticket/agent-client';
 import { ApiHealthSchema, type ApiHealth } from '@ticket/shared';
 import { Hono } from 'hono';
+import { mountDocs } from './docs.js';
+import { openApiDocument } from './openapi.js';
 import {
   classifyTicket,
   createDepartment,
@@ -97,6 +99,8 @@ export function createApiApp(deps: ApiDeps): Hono {
     const result = await overrideTicket(c, deps.agent, c.req.param('id'));
     return c.json(result.body, result.status);
   });
+
+  mountDocs(app, openApiDocument);
 
   app.notFound((c) => c.json({ error: { code: 'not_found', message: 'No such route.' } }, 404));
   app.onError((error, c) => {

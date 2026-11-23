@@ -28,6 +28,9 @@ async function waitFor(condition: () => boolean, timeoutMs = 15_000): Promise<vo
 }
 
 async function startAgent(): Promise<void> {
+  // Windows kill does not run the agent's shutdown, so a previous state file can
+  // still be there. Remove it and wait for the new process to publish its own.
+  if (existsSync(stateFile)) rmSync(stateFile);
   agentProcess = spawn(process.execPath, ['--import', 'tsx', AGENT_MAIN], {
     cwd: resolve(AGENT_MAIN, '..', '..'),
     env: {
