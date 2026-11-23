@@ -1,0 +1,16 @@
+node_modules/
+dist/
+out/
+coverage/
+*.tsbuildinfo
+
+.env
+.env.*
+!.env.example
+
+**/.data/
+**/.agent-data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
