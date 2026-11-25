@@ -5,5 +5,6 @@ export {
   senderHistoryBlock,
   ClassifyCancelledError,
   classifyTicketText,
+  type CategoryContext,
   type ClassifyTextInput,
 } from './classify.js';

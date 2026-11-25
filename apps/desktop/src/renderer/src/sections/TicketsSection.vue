@@ -1,10 +1,20 @@
 <script setup lang="ts">
-import { SenderEmailSchema, type Department, type TicketContext, type TicketView } from '@ticket/shared';
+import {
+  SenderEmailSchema,
+  type Category,
+  type Department,
+  type TicketContext,
+  type TicketPriority,
+  type TicketView,
+} from '@ticket/shared';
 import { computed, onMounted, ref } from 'vue';
+import { PRIORITY_OPTIONS } from '../category-form.js';
 import {
   errorMessage,
   formatConfidence,
   priorTicketLine,
+  PRIORITY_LABELS,
+  PRIORITY_TONES,
   senderLabel,
   senderSummaryLine,
   STATUS_TONES,
@@ -15,6 +25,7 @@ import {
 /** Tickets: the 50 most recent as the main view, a detail panel, submit, and override. */
 const tickets = ref<TicketView[]>([]);
 const departments = ref<Department[]>([]);
+const categories = ref<Category[]>([]);
 const loading = ref(true);
 const loadError = ref('');
 const selectedId = ref<string | null>(null);
@@ -40,8 +51,17 @@ const overriding = ref(false);
 const overrideError = ref('');
 const overrideDepartmentId = ref('');
 
+/** Admin category and priority corrections. */
+const categoryChoice = ref('');
+const priorityChoice = ref<TicketPriority | ''>('');
+const reviewing = ref(false);
+const reviewError = ref('');
+
 const activeDepartments = computed(() => departments.value.filter((department) => department.active));
-const rows = computed(() => tickets.value.map((ticket) => ticketRow(ticket, departments.value)));
+const activeCategories = computed(() => categories.value.filter((category) => category.active));
+const rows = computed(() =>
+  tickets.value.map((ticket) => ticketRow(ticket, departments.value, undefined, categories.value)),
+);
 const selected = computed(() => tickets.value.find((ticket) => ticket.id === selectedId.value) ?? null);
 const selectedFields = computed(() => (selected.value ? ticketFields(selected.value) : null));
 const selectedRow = computed(() => rows.value.find((row) => row.id === selectedId.value) ?? null);
@@ -50,12 +70,14 @@ async function load(): Promise<void> {
   loading.value = true;
   loadError.value = '';
   try {
-    const [ticketList, departmentList] = await Promise.all([
+    const [ticketList, departmentList, categoryList] = await Promise.all([
       window.api.listTickets(),
       window.api.listDepartments(),
+      window.api.listCategories(),
     ]);
     tickets.value = [...ticketList];
     departments.value = [...departmentList];
+    categories.value = [...categoryList];
   } catch (error) {
     loadError.value = errorMessage(error);
   } finally {
@@ -67,6 +89,9 @@ function select(id: string): void {
   selectedId.value = id;
   overrideDepartmentId.value = '';
   overrideError.value = '';
+  categoryChoice.value = '';
+  priorityChoice.value = '';
+  reviewError.value = '';
   mergeOpen.value = false;
   mergeInto.value = '';
   mergeMessage.value = null;
@@ -182,6 +207,27 @@ async function override(): Promise<void> {
   }
 }
 
+/** Sets the category or the priority. Neither touches the department or the other value. */
+async function review(kind: 'category' | 'priority'): Promise<void> {
+  if (!selected.value || reviewing.value) return;
+  reviewing.value = true;
+  reviewError.value = '';
+  try {
+    const id = selected.value.id;
+    const updated =
+      kind === 'category'
+        ? await window.api.setTicketCategory({ id, categoryId: categoryChoice.value })
+        : await window.api.setTicketPriority({ id, priority: priorityChoice.value as TicketPriority });
+    tickets.value = tickets.value.map((ticket) => (ticket.id === updated.id ? updated : ticket));
+    if (kind === 'category') categoryChoice.value = '';
+    else priorityChoice.value = '';
+  } catch (error) {
+    reviewError.value = errorMessage(error);
+  } finally {
+    reviewing.value = false;
+  }
+}
+
 onMounted(load);
 </script>
 
@@ -272,6 +318,8 @@ onMounted(load);
               <th scope="col">Subject</th>
               <th scope="col">Status</th>
               <th scope="col">Department</th>
+              <th scope="col">Category</th>
+              <th scope="col">Priority</th>
               <th scope="col">Confidence</th>
               <th scope="col">Channel</th>
               <th scope="col">Created</th>
@@ -290,6 +338,17 @@ onMounted(load);
               </td>
               <td><span class="badge" :data-tone="STATUS_TONES[row.status]">{{ row.statusLabel }}</span></td>
               <td>{{ row.department ?? '—' }}</td>
+              <td data-testid="row-category">
+                {{ row.category ?? '—' }}
+                <small v-if="row.modelCategory" class="model">model: {{ row.modelCategory }}</small>
+              </td>
+              <td data-testid="row-priority">
+                <span v-if="row.priority" class="badge" :data-tone="PRIORITY_TONES[row.priority]">
+                  {{ PRIORITY_LABELS[row.priority] }}
+                </span>
+                <span v-else>—</span>
+                <small v-if="row.modelPriority" class="model">model: {{ row.modelPriority }}</small>
+              </td>
               <td>{{ row.confidence }}</td>
               <td>{{ row.channel }}</td>
               <td class="nowrap">{{ row.created }}</td>
@@ -310,6 +369,17 @@ onMounted(load);
           </dd>
           <dt>Department</dt>
           <dd>{{ selectedRow.department ?? 'None applied' }}</dd>
+          <dt>Category</dt>
+          <dd data-testid="ticket-category">
+            {{ selectedRow.category ?? 'None' }}
+            <small v-if="selectedRow.modelCategory" class="model">model: {{ selectedRow.modelCategory }}</small>
+          </dd>
+          <dt>Priority</dt>
+          <dd data-testid="ticket-priority">
+            {{ selectedRow.priority ? PRIORITY_LABELS[selectedRow.priority] : 'None' }}
+            <small v-if="selectedRow.modelPriority" class="model">model: {{ selectedRow.modelPriority }}</small>
+            <small v-if="selected.decision.priorityReviewed" class="model">reviewed</small>
+          </dd>
           <dt>Confidence</dt>
           <dd>{{ formatConfidence(selectedFields.confidence) }}</dd>
           <dt>Sender</dt>
@@ -408,6 +478,34 @@ onMounted(load);
             {{ overriding ? 'Saving…' : 'Override' }}
           </button>
         </form>
+
+        <div class="override review" data-testid="ticket-review">
+          <form class="review-row" @submit.prevent="review('category')">
+            <label class="field">
+              <span>Set category</span>
+              <select v-model="categoryChoice" required :disabled="activeCategories.length === 0" data-testid="set-category">
+                <option disabled value="">Choose an active category</option>
+                <option v-for="category in activeCategories" :key="category.id" :value="category.id">
+                  {{ category.name }} ({{ category.id }})
+                </option>
+              </select>
+              <small v-if="activeCategories.length === 0">No active category. Add or activate one under Categories.</small>
+            </label>
+            <button type="submit" :disabled="reviewing || !categoryChoice">Set category</button>
+          </form>
+          <form class="review-row" @submit.prevent="review('priority')">
+            <label class="field">
+              <span>Set priority</span>
+              <select v-model="priorityChoice" required data-testid="set-priority">
+                <option disabled value="">Choose a priority</option>
+                <option v-for="priority in PRIORITY_OPTIONS" :key="priority" :value="priority">{{ PRIORITY_LABELS[priority] }}</option>
+              </select>
+              <small>Confirming the model's priority also counts as a review.</small>
+            </label>
+            <button type="submit" :disabled="reviewing || !priorityChoice">Set priority</button>
+          </form>
+          <p v-if="reviewError" class="error" role="alert">{{ reviewError }}</p>
+        </div>
       </aside>
     </div>
   </section>
@@ -556,5 +654,16 @@ small {
   gap: 8px;
   border-top: 1px solid var(--border);
   padding-top: 12px;
+}
+.review-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: end;
+}
+.model {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
 }
 </style>

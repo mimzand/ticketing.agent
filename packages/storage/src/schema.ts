@@ -48,6 +48,29 @@ export const decisions = sqliteTable('decisions', {
    * Set once by `overrideDecision`; `saveDecision` never writes it.
    */
   replacedDepartmentId: text('replaced_department_id'),
+  /** Problem category (an active category id when stored) and priority; null when none. */
+  categoryId: text('category_id'),
+  /** The model's category before the first admin category change. Set once by `setCategory`. */
+  replacedCategoryId: text('replaced_category_id'),
+  priority: text('priority'),
+  /** The model's priority before the first admin priority review. Set once by `setPriority`. */
+  replacedPriority: text('replaced_priority'),
+  priorityReviewed: integer('priority_reviewed', { mode: 'boolean' }).notNull().default(false),
+  categoryReviewed: integer('category_reviewed', { mode: 'boolean' }).notNull().default(false),
+});
+
+/**
+ * Problem categories, defined by an admin. Separate from departments and from the
+ * department taxonomy versions. `default_priority` is prompt guidance only.
+ */
+export const categories = sqliteTable('categories', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  description: text('description').notNull(),
+  defaultPriority: text('default_priority').notNull(),
+  active: integer('active', { mode: 'boolean' }).notNull(),
+  /** JSON array of strings. */
+  examples: text('examples').notNull().default('[]'),
 });
 
 /**

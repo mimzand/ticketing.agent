@@ -5,6 +5,8 @@ import {
   DepartmentExamplesSchema,
   DepartmentIdSchema,
   DepartmentSchema,
+  CategorySchema,
+  TicketPrioritySchema,
 } from '@ticket/shared';
 import { z } from 'zod';
 
@@ -21,6 +23,17 @@ export const CatalogueDepartmentSchema = z.strictObject({
   examples: DepartmentExamplesSchema.default([]),
 });
 export type CatalogueDepartment = z.infer<typeof CatalogueDepartmentSchema>;
+
+/** One problem category of a catalogue. Inactive ones are created, then deactivated. */
+export const CatalogueCategorySchema = z.strictObject({
+  id: DepartmentIdSchema,
+  name: CategorySchema.shape.name,
+  description: CategorySchema.shape.description,
+  active: z.boolean().default(true),
+  defaultPriority: TicketPrioritySchema,
+  examples: CategorySchema.shape.examples.default([]),
+});
+export type CatalogueCategory = z.infer<typeof CatalogueCategorySchema>;
 
 /**
  * What the fake Ollama answers for one chat request.
@@ -48,6 +61,19 @@ export const HistoryEntrySchema = z.strictObject({
 });
 export type HistoryEntry = z.infer<typeof HistoryEntrySchema>;
 
+/**
+ * A ticket from any sender classified before the case (no sender memory), then
+ * optionally corrected by an admin: a category and/or a priority review. Feeds the
+ * admin priority record.
+ */
+export const EarlierTicketSchema = z.strictObject({
+  ticket: ClassifyTicketSchema,
+  reply: ModelReplySchema,
+  category: DepartmentIdSchema.optional(),
+  priority: TicketPrioritySchema.optional(),
+});
+export type EarlierTicket = z.infer<typeof EarlierTicketSchema>;
+
 /** The decision a case expects. Only fresh classify outcomes: never `overridden`. */
 export const ExpectationSchema = z
   .strictObject({
@@ -57,6 +83,12 @@ export const ExpectationSchema = z
     confidence: z.enum(['above', 'below']).optional(),
     /** The stored quote (null when it must be dropped). */
     quote: z.string().min(1).nullable().optional(),
+    /** Scored apart from the department, and only when set. */
+    categoryId: DepartmentIdSchema.nullable().optional(),
+    priority: TicketPrioritySchema.nullable().optional(),
+    /** Text the system instruction of the case's classify must contain / must not contain. */
+    systemIncludes: z.array(z.string().min(1)).max(20).optional(),
+    systemExcludes: z.array(z.string().min(1)).max(20).optional(),
   })
   .refine((e) => (e.status === 'labeled') === (e.departmentId !== null), {
     message: 'departmentId is set exactly when status is labeled.',
@@ -79,6 +111,8 @@ export const EvalCaseSchema = z.strictObject({
   /** Key into the file's `catalogues`. */
   catalogue: z.string().min(1).max(64),
   history: z.array(HistoryEntrySchema).max(5).default([]),
+  /** Classified before the history; any sender. Optional so older files keep their shape. */
+  earlier: z.array(EarlierTicketSchema).max(50).optional(),
   ticket: ClassifyTicketSchema,
   reply: ModelReplySchema,
   /**
@@ -98,6 +132,8 @@ export const SuiteFileSchema = z
     /** CLASSIFY_MIN_CONFIDENCE for every case of this file. */
     threshold: z.number().min(0).max(1).default(CLASSIFY_MIN_CONFIDENCE_DEFAULT),
     catalogues: z.record(z.string().min(1).max(64), z.array(CatalogueDepartmentSchema)),
+    /** Problem categories per catalogue name. Optional: a missing entry means no categories. */
+    categories: z.record(z.string().min(1).max(64), z.array(CatalogueCategorySchema)).optional(),
     cases: z.array(EvalCaseSchema).min(1),
   })
   .superRefine((file, ctx) => {
@@ -110,6 +146,15 @@ export const SuiteFileSchema = z
       if (!catalogue) {
         ctx.addIssue({ code: 'custom', message: `Unknown catalogue ${c.catalogue}.`, path: [...path, 'catalogue'] });
         return;
+      }
+      const categories = file.categories?.[c.catalogue] ?? [];
+      const expectedCategory = c.expect.categoryId;
+      if (typeof expectedCategory === 'string' && !categories.some((d) => d.id === expectedCategory && d.active)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `Expected category ${expectedCategory} is not active in ${c.catalogue}.`,
+          path: [...path, 'expect', 'categoryId'],
+        });
       }
       if (c.expect.departmentId !== null && !catalogue.some((d) => d.id === c.expect.departmentId && d.active)) {
         ctx.addIssue({

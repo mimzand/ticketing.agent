@@ -20,7 +20,6 @@ import {
   type MergeSenders,
   type MergeSendersResult,
   type TicketContext,
-  type Decision,
   type DeleteDepartment,
   type DeleteDepartmentResult,
   type Department,
@@ -38,8 +37,23 @@ import {
   OVERRIDE_FEEDBACK_LIMIT,
   OverrideFeedbackSchema,
   type OverrideFeedback,
+  CATEGORY_IN_USE_MESSAGE,
+  CreateCategorySchema,
+  priorityTrends,
+  SetTicketCategorySchema,
+  SetTicketPrioritySchema,
+  TicketPrioritySchema,
+  UpdateCategorySchema,
+  type Category,
+  type CreateCategoryInput,
+  type DeleteCategory,
+  type DeleteCategoryResult,
+  type SetTicketCategory,
+  type SetTicketPriority,
+  type TicketPriority,
+  type UpdateCategory,
 } from '@ticket/shared';
-import { type TicketDatabase } from '@ticket/storage';
+import { type SaveDecisionInput, type TicketDatabase } from '@ticket/storage';
 import { overriddenKeys, resolveSettings, type ResolvedSettings } from './settings.js';
 
 export type HostErrorCode = 'bad_request' | 'not_found' | 'conflict' | 'cancelled';
@@ -55,13 +69,15 @@ export class HostError extends Error {
   }
 }
 
-const failed = (taxonomyVersion: number): Decision => ({
+const failed = (taxonomyVersion: number): SaveDecisionInput => ({
   departmentId: null,
   confidence: 0,
   rationale: 'The model could not be reached.',
   status: 'failed',
   quote: null,
   taxonomyVersion,
+  categoryId: null,
+  priority: null,
 });
 
 /** Refuses an alias that another department already uses (compared case-insensitively). */
@@ -104,6 +120,22 @@ export interface AgentHost {
    * current catalogue. No email. Nothing is written to departments or examples.
    */
   overrideFeedback(): OverrideFeedback;
+  /** Every category, inactive ones included. */
+  listCategories(): readonly Category[];
+  createCategory(input: CreateCategoryInput): Category;
+  updateCategory(input: UpdateCategory): Category;
+  /** Refused (conflict) while a decision stores the id; deactivate instead. */
+  deleteCategory(input: DeleteCategory): DeleteCategoryResult;
+  /**
+   * Admin category. Only an active category. The first time keeps the model category
+   * as the replaced one. Department fields and priority are not changed.
+   */
+  setCategory(input: SetTicketCategory): TicketView;
+  /**
+   * Admin priority review. The first time keeps the model priority as the replaced one.
+   * Department fields and category are not changed.
+   */
+  setPriority(input: SetTicketPriority): TicketView;
   modelHealth(): Promise<ModelHealth>;
   getSettings(): SettingsView;
   updateSettings(patch: SettingsPatch): SettingsView;
@@ -216,6 +248,50 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
         departments: db.listDepartments(),
         items: db.overrideFeedback(OVERRIDE_FEEDBACK_LIMIT),
       });
+    },
+    listCategories: () => db.listCategories(),
+    createCategory(raw) {
+      const parsed = CreateCategorySchema.safeParse(raw);
+      if (!parsed.success) throw new HostError(parsed.error.issues[0]?.message ?? 'Invalid category.');
+      if (db.listCategories().some((category) => category.id === parsed.data.id)) {
+        throw new HostError('A category with that id already exists.', 'conflict');
+      }
+      return db.insertCategory(parsed.data);
+    },
+    updateCategory(raw) {
+      const parsed = UpdateCategorySchema.safeParse(raw);
+      if (!parsed.success) throw new HostError(parsed.error.issues[0]?.message ?? 'Invalid category.');
+      const updated = db.updateCategory(parsed.data);
+      if (!updated) throw new HostError('No category has that id.', 'not_found');
+      return updated;
+    },
+    deleteCategory(input) {
+      const outcome = db.deleteCategory(input.id);
+      if (outcome === 'missing') throw new HostError('No category has that id.', 'not_found');
+      if (outcome === 'referenced') throw new HostError(CATEGORY_IN_USE_MESSAGE, 'conflict');
+      return { id: input.id, deleted: true };
+    },
+    setCategory(raw) {
+      const parsed = SetTicketCategorySchema.safeParse(raw);
+      if (!parsed.success) throw new HostError(parsed.error.issues[0]?.message ?? 'Invalid category.');
+      const ticket = db.getById(parsed.data.id);
+      if (!ticket) throw new HostError('No such ticket.', 'not_found');
+      const category = db.listCategories().find((item) => item.id === parsed.data.categoryId);
+      if (!category?.active) throw new HostError('That category is not active.');
+      if (!db.setCategory(ticket.id, category.id)) throw new HostError('No such ticket.', 'not_found');
+      const updated = db.getById(ticket.id);
+      if (!updated) throw new HostError('No such ticket.', 'not_found');
+      return updated;
+    },
+    setPriority(raw) {
+      const parsed = SetTicketPrioritySchema.safeParse(raw);
+      if (!parsed.success) throw new HostError('Priority is one of low, normal, high, urgent.');
+      const ticket = db.getById(parsed.data.id);
+      if (!ticket) throw new HostError('No such ticket.', 'not_found');
+      if (!db.setPriority(ticket.id, parsed.data.priority)) throw new HostError('No such ticket.', 'not_found');
+      const updated = db.getById(ticket.id);
+      if (!updated) throw new HostError('No such ticket.', 'not_found');
+      return updated;
     },
     async modelHealth() {
       const { values } = resolved();
@@ -332,15 +408,26 @@ async function classifyOnce(
   // catalogue (no await in between), so the decision records the version it used.
   const active = db.listDepartments().filter((department) => department.active);
   const taxonomyVersion = db.taxonomyVersion();
-  let decision: Decision;
+  // Categories: only active ones are offered. The admin priority record is counts
+  // over every admin-reviewed decision, grouped by final category; never ticket text.
+  const categories = db.listCategories().filter((category) => category.active);
+  const listed = new Set(categories.map((category) => category.id));
+  const trends = priorityTrends(db.priorityAggregates()).filter((trend) => listed.has(trend.categoryId));
+  let decision: SaveDecisionInput;
   try {
     const output = await classifyTicketText({
       ollama,
       departments: active,
       ticket: input,
       history,
+      categories: { categories, priorityTrends: trends },
       ...(signal && { signal }),
     });
+    // Independent of the department rules: an exact active category id or null, one of
+    // the four priorities or null. Nothing is coerced, and a category default never
+    // replaces the model's priority.
+    const categoryId = typeof output.categoryId === 'string' && listed.has(output.categoryId) ? output.categoryId : null;
+    const priority: TicketPriority | null = TicketPrioritySchema.safeParse(output.priority).data ?? null;
     // Only an exact active id counts; an alias or a name is not an id.
     const known = active.some((department) => department.id === output.departmentId);
     // Kept only if it is an exact substring of this ticket; never re-asked.
@@ -353,6 +440,8 @@ async function classifyOnce(
         status: 'needs_review',
         quote,
         taxonomyVersion,
+        categoryId,
+        priority,
       };
     } else {
       decision = {
@@ -362,6 +451,8 @@ async function classifyOnce(
         status: 'labeled',
         quote,
         taxonomyVersion,
+        categoryId,
+        priority,
       };
     }
   } catch (error) {

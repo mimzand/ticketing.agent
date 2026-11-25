@@ -24,6 +24,15 @@ import {
   type TicketView,
   type UpdateDepartment,
 } from './ticket.js';
+import {
+  type Category,
+  type CreateCategoryInput,
+  type DeleteCategory,
+  type DeleteCategoryResult,
+  type SetTicketCategory,
+  type SetTicketPriority,
+  type UpdateCategory,
+} from './category.js';
 
 /** Name of the object the preload exposes on `window`. */
 export const RENDERER_API_KEY = 'api';
@@ -36,10 +45,16 @@ export const IpcChannels = {
   updateDepartment: 'departments:update',
   deleteDepartment: 'departments:delete',
   getTaxonomy: 'departments:taxonomy',
+  listCategories: 'categories:list',
+  createCategory: 'categories:create',
+  updateCategory: 'categories:update',
+  deleteCategory: 'categories:delete',
   classifyTicket: 'tickets:classify',
   cancelClassify: 'tickets:cancel-classify',
   listTickets: 'tickets:list',
   overrideTicket: 'tickets:override',
+  setTicketCategory: 'tickets:set-category',
+  setTicketPriority: 'tickets:set-priority',
   ticketContext: 'tickets:context',
   mergeSender: 'senders:merge',
   getSettings: 'settings:get',
@@ -71,6 +86,11 @@ export interface RendererApi {
   deleteDepartment(input: DeleteDepartment): Promise<DeleteDepartmentResult>;
   /** The current taxonomy version and its read-only history. */
   getTaxonomy(): Promise<TaxonomyState>;
+  /** Problem categories, inactive ones included. */
+  listCategories(): Promise<readonly Category[]>;
+  createCategory(input: CreateCategoryInput): Promise<Category>;
+  updateCategory(input: UpdateCategory): Promise<Category>;
+  deleteCategory(input: DeleteCategory): Promise<DeleteCategoryResult>;
   classifyTicket(input: ClassifyTicket): Promise<TicketView>;
   /**
    * Cancels the in-flight submit of this externalId. The pending `classifyTicket` then
@@ -79,6 +99,10 @@ export interface RendererApi {
   cancelClassify(input: CancelClassify): Promise<CancelClassifyResult>;
   listTickets(): Promise<readonly TicketView[]>;
   overrideTicket(input: OverrideTicket): Promise<TicketView>;
+  /** Admin category (active only). Department fields and priority do not change. */
+  setTicketCategory(input: SetTicketCategory): Promise<TicketView>;
+  /** Admin priority review. Department fields and category do not change. */
+  setTicketPriority(input: SetTicketPriority): Promise<TicketView>;
   /** The ticket's sender (or null) and that sender's earlier decided tickets. */
   ticketContext(id: string): Promise<TicketContext>;
   /** Operator merge: moves every ticket of `from` onto `into`. Decisions are not changed. */

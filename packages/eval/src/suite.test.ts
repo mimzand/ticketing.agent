@@ -68,6 +68,8 @@ describe('suite files', () => {
       /email/,
     ],
     ['an overridden expectation', withCase({ expect: { status: 'overridden', departmentId: 'billing' } }), /status/],
+    ['an expected category that is not in the catalogue', withCase({ expect: { status: 'labeled', departmentId: 'billing', categoryId: 'outage' } }), /category outage is not active/],
+    ['a priority that is not one of the four', withCase({ expect: { status: 'labeled', departmentId: 'billing', priority: 'critical' } }), /priority/],
   ])('rejects %s', (_name, input, message) => {
     expect(() => parseSuiteFile('t.json', input)).toThrow(message);
   });

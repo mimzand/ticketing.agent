@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { TicketPrioritySchema } from './priority.js';
 
 /** Default applied in the agent host when CLASSIFY_MIN_CONFIDENCE is unset. */
 export const CLASSIFY_MIN_CONFIDENCE_DEFAULT = 0.7;
@@ -157,6 +158,18 @@ export const DecisionSchema = z.strictObject({
   quote: z.string().min(1).max(QUOTE_MAX_LENGTH).nullable(),
   /** The taxonomy version the classify used. 0 when no department existed (or before versions). */
   taxonomyVersion: z.int().min(0),
+  /** The problem category: an active category id the model or an admin chose, or null. */
+  categoryId: DepartmentIdSchema.nullable(),
+  /** What the model had stored before the first admin category change (null if none). */
+  replacedCategoryId: DepartmentIdSchema.nullable(),
+  /** An admin has set the category at least once. */
+  categoryReviewed: z.boolean(),
+  /** low, normal, high, urgent, or null when the model gave none of these. */
+  priority: TicketPrioritySchema.nullable(),
+  /** What the model had stored before the first admin priority review (null if none). */
+  replacedPriority: TicketPrioritySchema.nullable(),
+  /** An admin has set the priority at least once (confirming the same value counts). */
+  priorityReviewed: z.boolean(),
 });
 export type Decision = z.infer<typeof DecisionSchema>;
 
@@ -267,6 +280,13 @@ export const ClassifierOutputSchema = z.strictObject({
   rationale: z.string().trim().min(1).max(2_000),
   /** The model's evidence. The host keeps it only if it is an exact substring of the ticket. */
   quote: z.string().max(20_000).nullable().optional(),
+  /**
+   * The model's category id and priority. Missing is undefined; a value of the wrong
+   * type is read as null. The host keeps only an active category id and one of the
+   * four priorities, and never coerces anything else.
+   */
+  categoryId: z.string().max(200).nullable().optional().catch(null),
+  priority: z.string().max(200).nullable().optional().catch(null),
 });
 export type ClassifierOutput = z.infer<typeof ClassifierOutputSchema>;
 

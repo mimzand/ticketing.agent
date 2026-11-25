@@ -36,6 +36,13 @@
       "when": 1798000000000,
       "tag": "0004_replaced_department",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1799000000000,
+      "tag": "0005_priority_category",
+      "breakpoints": true
     }
   ]
 }

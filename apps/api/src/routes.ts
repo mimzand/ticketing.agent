@@ -13,6 +13,13 @@ import {
   UpdateDepartmentSchema,
   OverrideTicketSchema,
   OverrideFeedbackSchema,
+  CategorySchema,
+  CreateCategorySchema,
+  DeleteCategoryResultSchema,
+  DeleteCategorySchema,
+  SetTicketCategorySchema,
+  SetTicketPrioritySchema,
+  UpdateCategorySchema,
   TicketViewSchema,
 } from '@ticket/shared';
 import { type Context } from 'hono';
@@ -160,6 +167,68 @@ export async function deleteDepartment(agent: AgentLink, id: string): Promise<Js
   return forward(async () =>
     DeleteDepartmentResultSchema.parse(await agent.request('departments.delete', parsed.data)),
   );
+}
+
+export async function listCategories(agent: AgentLink): Promise<JsonResult> {
+  return forward(async () => CategorySchema.array().parse(await agent.request('categories.list', {})));
+}
+
+export async function createCategory(c: Context, agent: AgentLink): Promise<JsonResult> {
+  const body = await readBody(c, CreateCategorySchema);
+  if (isJsonResult(body)) return body;
+  return forward(async () => CategorySchema.parse(await agent.request('categories.create', body)));
+}
+
+export async function updateCategory(c: Context, agent: AgentLink, id: string): Promise<JsonResult> {
+  const body = await readObject(c);
+  if (isJsonResult(body)) return body;
+  if ('id' in body) {
+    return {
+      status: 400,
+      body: { error: { code: 'bad_request', message: 'The category id cannot change; decisions store it.' } },
+    };
+  }
+  const parsed = UpdateCategorySchema.safeParse({ ...body, id });
+  if (!parsed.success) {
+    return { status: 400, body: { error: { code: 'bad_request', message: `Invalid body at: ${paths(parsed.error)}.` } } };
+  }
+  return forward(async () => CategorySchema.parse(await agent.request('categories.update', parsed.data)));
+}
+
+/** DELETE /v1/categories/{id}: 409 while any decision stores the id. */
+export async function deleteCategory(agent: AgentLink, id: string): Promise<JsonResult> {
+  const parsed = DeleteCategorySchema.safeParse({ id });
+  if (!parsed.success) {
+    return { status: 400, body: { error: { code: 'bad_request', message: 'Invalid category id.' } } };
+  }
+  return forward(async () => DeleteCategoryResultSchema.parse(await agent.request('categories.delete', parsed.data)));
+}
+
+/** POST /v1/tickets/{id}/category and /priority: the body without the id, which comes from the path. */
+async function ticketBody(c: Context, id: string): Promise<Record<string, unknown> | JsonResult> {
+  const body = await readObject(c);
+  if (isJsonResult(body)) return body;
+  return { ...body, id };
+}
+
+export async function setTicketCategory(c: Context, agent: AgentLink, id: string): Promise<JsonResult> {
+  const body = await ticketBody(c, id);
+  if (isJsonResult(body)) return body;
+  const parsed = SetTicketCategorySchema.safeParse(body);
+  if (!parsed.success) {
+    return { status: 400, body: { error: { code: 'bad_request', message: `Invalid body at: ${paths(parsed.error)}.` } } };
+  }
+  return forward(async () => TicketViewSchema.parse(await agent.request('tickets.setCategory', parsed.data)));
+}
+
+export async function setTicketPriority(c: Context, agent: AgentLink, id: string): Promise<JsonResult> {
+  const body = await ticketBody(c, id);
+  if (isJsonResult(body)) return body;
+  const parsed = SetTicketPrioritySchema.safeParse(body);
+  if (!parsed.success) {
+    return { status: 400, body: { error: { code: 'bad_request', message: `Invalid body at: ${paths(parsed.error)}.` } } };
+  }
+  return forward(async () => TicketViewSchema.parse(await agent.request('tickets.setPriority', parsed.data)));
 }
 
 /** POST /v1/senders:merge: moves every ticket of `from` onto `into`. Decisions are kept. */

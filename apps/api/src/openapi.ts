@@ -11,6 +11,11 @@ import {
   OVERRIDE_FEEDBACK_LIMIT,
   OverrideFeedbackSchema,
   TicketViewSchema,
+  CategoryChangesSchema,
+  CategorySchema,
+  CreateCategorySchema,
+  DeleteCategoryResultSchema,
+  TicketPrioritySchema,
 } from '@ticket/shared';
 import { z } from 'zod';
 import { CLASSIFY_RATE_LIMIT, CORS_ALLOWED_HEADERS } from './limits.js';
@@ -31,6 +36,8 @@ const UpdateDepartmentBodySchema = DepartmentChangesSchema;
 const OverrideBodySchema = z.strictObject({
   departmentId: DepartmentIdSchema,
 });
+const SetCategoryBodySchema = z.strictObject({ categoryId: DepartmentIdSchema });
+const SetPriorityBodySchema = z.strictObject({ priority: TicketPrioritySchema });
 
 type JsonSchema = Record<string, unknown>;
 
@@ -71,6 +78,8 @@ const badGateway: ResponseSpec = { description: 'The agent rejected the request.
 const unavailable: ResponseSpec = { description: 'The agent is not reachable.', schema: ErrorSchema };
 
 const authedErrors = { '401': unauthorized, '502': badGateway, '503': unavailable };
+
+const ticketParam = [{ name: 'id', schema: z.uuid(), description: 'Ticket id.' }] as const;
 
 const operations: readonly Operation[] = [
   {
@@ -145,6 +154,66 @@ const operations: readonly Operation[] = [
     },
   },
   {
+    method: 'get',
+    path: '/v1/categories',
+    tag: 'Categories',
+    summary: 'List problem categories',
+    auth: true,
+    responses: {
+      '200': { description: 'Every category, including inactive ones.', schema: z.array(CategorySchema) },
+      ...authedErrors,
+    },
+  },
+  {
+    method: 'post',
+    path: '/v1/categories',
+    tag: 'Categories',
+    summary: 'Create a problem category',
+    description:
+      'A category is a kind of problem, separate from the handling department. defaultPriority is required and is prompt guidance only. ' +
+      'Examples are optional (at most 20, 300 characters each). Categories do not change the department taxonomy version.',
+    auth: true,
+    body: CreateCategorySchema,
+    responses: {
+      '200': { description: 'The created category. New categories are active.', schema: CategorySchema },
+      '400': badRequest,
+      '409': { description: 'The id exists.', schema: ErrorSchema },
+      ...authedErrors,
+    },
+  },
+  {
+    method: 'patch',
+    path: '/v1/categories/{id}',
+    tag: 'Categories',
+    summary: 'Edit a problem category',
+    description: 'Changes name, description, active, defaultPriority, or examples. The id cannot change.',
+    auth: true,
+    params: [{ name: 'id', schema: DepartmentIdSchema, description: 'Category id.' }],
+    body: CategoryChangesSchema,
+    responses: {
+      '200': { description: 'The updated category.', schema: CategorySchema },
+      '400': badRequest,
+      '404': notFound,
+      ...authedErrors,
+    },
+  },
+  {
+    method: 'delete',
+    path: '/v1/categories/{id}',
+    tag: 'Categories',
+    summary: 'Remove a problem category',
+    description: 'Refused while any decision stores the id as its category or replaced category. Deactivate it instead.',
+    auth: true,
+    params: [{ name: 'id', schema: DepartmentIdSchema, description: 'Category id.' }],
+    responses: {
+      '200': { description: 'The category was removed.', schema: DeleteCategoryResultSchema },
+      '400': badRequest,
+      '404': notFound,
+      '409': { description: 'A ticket decision still stores this category. Deactivate it instead.', schema: ErrorSchema },
+      ...authedErrors,
+    },
+  },
+  {
     method: 'post',
     path: '/v1/tickets:classify',
     tag: 'Tickets',
@@ -208,6 +277,42 @@ const operations: readonly Operation[] = [
     body: OverrideBodySchema,
     responses: {
       '200': { description: 'The ticket after the override.', schema: TicketViewSchema },
+      '400': badRequest,
+      '404': notFound,
+      ...authedErrors,
+    },
+  },
+  {
+    method: 'post',
+    path: '/v1/tickets/{id}/category',
+    tag: 'Tickets',
+    summary: 'Set a ticket category (admin)',
+    description:
+      'An active category only. The first time keeps the model category as replacedCategoryId and sets categoryReviewed; ' +
+      'later calls change only categoryId. Department fields and priority do not change.',
+    auth: true,
+    params: ticketParam,
+    body: SetCategoryBodySchema,
+    responses: {
+      '200': { description: 'The ticket after the change.', schema: TicketViewSchema },
+      '400': badRequest,
+      '404': notFound,
+      ...authedErrors,
+    },
+  },
+  {
+    method: 'post',
+    path: '/v1/tickets/{id}/priority',
+    tag: 'Tickets',
+    summary: 'Set a ticket priority (admin review)',
+    description:
+      'low, normal, high, or urgent. The first time keeps the model priority as replacedPriority and sets priorityReviewed ' +
+      '(confirming the same value counts); later calls change only priority. Department fields and category do not change.',
+    auth: true,
+    params: ticketParam,
+    body: SetPriorityBodySchema,
+    responses: {
+      '200': { description: 'The ticket after the change.', schema: TicketViewSchema },
       '400': badRequest,
       '404': notFound,
       ...authedErrors,

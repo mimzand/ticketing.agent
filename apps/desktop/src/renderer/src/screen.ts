@@ -1,4 +1,6 @@
 import {
+  type Category,
+  type TicketPriority,
   type DecisionStatus,
   type Department,
   type PriorTicket,
@@ -55,15 +57,44 @@ export interface TicketRow {
   readonly confidence: string;
   readonly channel: string;
   readonly created: string;
+  /** Category name (or id if the category is gone), or null. */
+  readonly category: string | null;
+  /** The model's category, only when an admin changed it ("none" when the model gave none). */
+  readonly modelCategory: string | null;
+  /** The current priority, or null. */
+  readonly priority: TicketPriority | null;
+  /** The model's priority, only when an admin reviewed the priority and changed it ("none" when it gave none). */
+  readonly modelPriority: TicketPriority | 'none' | null;
 }
+
+export const PRIORITY_LABELS: Record<TicketPriority, string> = {
+  low: 'Low',
+  normal: 'Normal',
+  high: 'High',
+  urgent: 'Urgent',
+};
+
+export const PRIORITY_TONES: Record<TicketPriority, 'ok' | 'warn' | 'danger' | 'accent' | undefined> = {
+  low: undefined,
+  normal: 'ok',
+  high: 'warn',
+  urgent: 'danger',
+};
+
+const categoryName = (id: string, categories: readonly Category[]): string =>
+  categories.find((category) => category.id === id)?.name ?? id;
 
 export function ticketRow(
   ticket: TicketView,
   departments: readonly Department[],
   formatDate: (iso: string) => string = (iso) =>
     new Date(iso).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' }),
+  categories: readonly Category[] = [],
 ): TicketRow {
   const fields = ticketFields(ticket);
+  const { decision } = ticket;
+  const categoryChanged = decision.categoryReviewed && decision.replacedCategoryId !== decision.categoryId;
+  const priorityChanged = decision.priorityReviewed && decision.replacedPriority !== decision.priority;
   const name =
     fields.department === null
       ? null
@@ -77,6 +108,14 @@ export function ticketRow(
     confidence: formatConfidence(fields.confidence),
     channel: ticket.channel,
     created: formatDate(ticket.createdAt),
+    category: decision.categoryId === null ? null : categoryName(decision.categoryId, categories),
+    modelCategory: categoryChanged
+      ? decision.replacedCategoryId === null
+        ? 'none'
+        : categoryName(decision.replacedCategoryId, categories)
+      : null,
+    priority: decision.priority,
+    modelPriority: priorityChanged ? (decision.replacedPriority ?? 'none') : null,
   };
 }
 

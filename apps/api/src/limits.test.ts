@@ -19,6 +19,12 @@ const ticketView = {
     status: 'labeled',
     quote: 'Invoice',
     taxonomyVersion: 1,
+    categoryId: null,
+    replacedCategoryId: null,
+    categoryReviewed: false,
+    priority: null,
+    replacedPriority: null,
+    priorityReviewed: false,
   },
 };
 

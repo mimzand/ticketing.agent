@@ -5,7 +5,6 @@ import {
   type ClassifyTicket,
   CreateDepartmentSchema,
   type CreateDepartmentInput,
-  type Decision,
   type Department,
   type SettingsPatch,
   type SettingsValues,
@@ -20,17 +19,44 @@ import {
   type TaxonomyState,
   type TicketView,
   type UpdateDepartment,
+  CategorySchema,
+  CreateCategorySchema,
+  PriorityAggregateSchema,
+  TicketPrioritySchema,
+  type Category,
+  type CreateCategoryInput,
+  type PriorityAggregate,
+  type TicketPriority,
+  type UpdateCategory,
 } from '@ticket/shared';
 import BetterSqlite3 from 'better-sqlite3';
-import { and, count, desc, eq, isNotNull, lt, max, ne } from 'drizzle-orm';
+import { type z } from 'zod';
+import { and, count, desc, eq, isNotNull, lt, max, ne, or } from 'drizzle-orm';
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { existsSync, mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
-import { decisions, departments, senders, settings, taxonomyVersions, tickets } from './schema.js';
+import { categories, decisions, departments, senders, settings, taxonomyVersions, tickets } from './schema.js';
 
 export const RECENT_TICKET_LIMIT = 50;
+
+/**
+ * What a classify stores: the department fields, plus the category and priority the
+ * host accepted (missing means null). The admin review columns are never written here.
+ */
+export const SaveDecisionSchema = DecisionSchema.pick({
+  departmentId: true,
+  confidence: true,
+  rationale: true,
+  status: true,
+  quote: true,
+  taxonomyVersion: true,
+}).extend({
+  categoryId: DecisionSchema.shape.categoryId.default(null),
+  priority: DecisionSchema.shape.priority.default(null),
+});
+export type SaveDecisionInput = z.input<typeof SaveDecisionSchema>;
 
 export interface TicketDatabase {
   listDepartments(): readonly Department[];
@@ -85,8 +111,37 @@ export interface TicketDatabase {
   mergeSenders(from: string, into: string): { readonly email: string; readonly movedTickets: number } | null;
   /** Removes a ticket row that has no decision (e.g. a cancelled classify). Decided rows are kept. */
   discardUndecided(ticketId: string): void;
-  /** Writes a classifier decision. Never touches the replaced department. */
-  saveDecision(ticketId: string, decision: Decision): void;
+  /**
+   * Writes a classifier decision (department fields, category, priority). Never
+   * touches the replaced department, the replaced category or priority, or the
+   * admin review flags.
+   */
+  saveDecision(ticketId: string, decision: SaveDecisionInput): void;
+  /**
+   * Admin category: the first time, the category on the row at that moment (or null)
+   * becomes the replaced category and the decision is marked category-reviewed; later
+   * calls change only the category. Department fields and priority are untouched.
+   * `false` when the ticket has no decision.
+   */
+  setCategory(ticketId: string, categoryId: string): boolean;
+  /**
+   * Admin priority, same rule: the first time, the priority on the row (or null)
+   * becomes the replaced priority and the decision is marked priority-reviewed;
+   * later calls change only the priority. Confirming the same value still counts.
+   */
+  setPriority(ticketId: string, priority: TicketPriority): boolean;
+  /**
+   * Decision counts grouped by final category, final priority, replaced priority, and
+   * the priority-review flag. Counts only: no ticket text, no sender.
+   */
+  priorityAggregates(): PriorityAggregate[];
+  listCategories(): readonly Category[];
+  /** Inserts an active category. Throws when the id exists. Taxonomy versions are not touched. */
+  insertCategory(input: CreateCategoryInput): Category;
+  /** Null when no such row. The id never changes. */
+  updateCategory(input: UpdateCategory): Category | null;
+  /** Refused while any decision stores the id as its category or replaced category. */
+  deleteCategory(id: string): 'deleted' | 'referenced' | 'missing';
   /**
    * An operator override, in one transaction: the first time a decision becomes
    * `overridden`, the department on the row at that moment (or null) is kept as the
@@ -113,6 +168,7 @@ type Database = BetterSQLite3Database<{
   settings: typeof settings;
   taxonomyVersions: typeof taxonomyVersions;
   senders: typeof senders;
+  categories: typeof categories;
 }>;
 type Tx = Parameters<Parameters<Database['transaction']>[0]>[0];
 
@@ -145,6 +201,23 @@ const parseList = (json: string): unknown => {
 
 function toDepartment(row: DepartmentRow): Department {
   return DepartmentSchema.parse({ ...row, aliases: parseList(row.aliases), examples: parseList(row.examples) });
+}
+
+interface CategoryRow {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+  readonly defaultPriority: string;
+  readonly active: boolean;
+  readonly examples: string;
+}
+
+function toCategory(row: CategoryRow): Category {
+  return CategorySchema.parse({ ...row, examples: parseList(row.examples) });
+}
+
+function toCategoryRow(category: Category): CategoryRow {
+  return { ...category, examples: JSON.stringify(category.examples) };
 }
 
 function toRow(department: Department): DepartmentRow {
@@ -189,6 +262,12 @@ interface TicketRow {
   readonly status: string;
   readonly quote: string | null;
   readonly taxonomyVersion: number;
+  readonly categoryId: string | null;
+  readonly replacedCategoryId: string | null;
+  readonly categoryReviewed: boolean;
+  readonly priority: string | null;
+  readonly replacedPriority: string | null;
+  readonly priorityReviewed: boolean;
   readonly email: string | null;
 }
 
@@ -208,6 +287,12 @@ function toView(row: TicketRow): TicketView {
       status: row.status,
       quote: row.quote,
       taxonomyVersion: row.taxonomyVersion,
+      categoryId: row.categoryId,
+      replacedCategoryId: row.replacedCategoryId,
+      categoryReviewed: row.categoryReviewed,
+      priority: row.priority,
+      replacedPriority: row.replacedPriority,
+      priorityReviewed: row.priorityReviewed,
     }),
   });
 }
@@ -227,6 +312,12 @@ const ticketQuery = (db: Database) =>
       status: decisions.status,
       quote: decisions.quote,
       taxonomyVersion: decisions.taxonomyVersion,
+      categoryId: decisions.categoryId,
+      replacedCategoryId: decisions.replacedCategoryId,
+      categoryReviewed: decisions.categoryReviewed,
+      priority: decisions.priority,
+      replacedPriority: decisions.replacedPriority,
+      priorityReviewed: decisions.priorityReviewed,
       email: senders.email,
     })
     .from(tickets)
@@ -251,7 +342,7 @@ export function openTicketDatabase(filePath: string): TicketDatabase {
   const sqlite = new BetterSqlite3(filePath);
   sqlite.pragma('journal_mode = WAL');
   sqlite.pragma('foreign_keys = ON');
-  const db = drizzle(sqlite, { schema: { departments, tickets, decisions, settings, taxonomyVersions, senders } });
+  const db = drizzle(sqlite, { schema: { departments, tickets, decisions, settings, taxonomyVersions, senders, categories } });
   migrate(db, { migrationsFolder: migrationsFolder() });
   // A database from before taxonomy versions that already has departments gets a
   // baseline version 1. Older decisions keep version 0 (unknown).
@@ -452,7 +543,7 @@ export function openTicketDatabase(filePath: string): TicketDatabase {
       });
     },
     saveDecision(ticketId, decision) {
-      const parsed = DecisionSchema.parse(decision);
+      const parsed = SaveDecisionSchema.parse(decision);
       const values = {
         ticketId,
         departmentId: parsed.departmentId,
@@ -461,6 +552,8 @@ export function openTicketDatabase(filePath: string): TicketDatabase {
         status: parsed.status,
         quote: parsed.quote,
         taxonomyVersion: parsed.taxonomyVersion,
+        categoryId: parsed.categoryId,
+        priority: parsed.priority,
       };
       db.insert(decisions)
         .values(values)
@@ -473,9 +566,113 @@ export function openTicketDatabase(filePath: string): TicketDatabase {
             status: values.status,
             quote: values.quote,
             taxonomyVersion: values.taxonomyVersion,
+            categoryId: values.categoryId,
+            priority: values.priority,
           },
         })
         .run();
+    },
+    setCategory(ticketId, categoryId) {
+      return db.transaction((tx) => {
+        const current = tx
+          .select({ categoryId: decisions.categoryId, reviewed: decisions.categoryReviewed })
+          .from(decisions)
+          .where(eq(decisions.ticketId, ticketId))
+          .get();
+        if (!current) return false;
+        tx.update(decisions)
+          .set(
+            current.reviewed
+              ? { categoryId }
+              : { categoryId, replacedCategoryId: current.categoryId, categoryReviewed: true },
+          )
+          .where(eq(decisions.ticketId, ticketId))
+          .run();
+        return true;
+      });
+    },
+    setPriority(ticketId, priority) {
+      const value = TicketPrioritySchema.parse(priority);
+      return db.transaction((tx) => {
+        const current = tx
+          .select({ priority: decisions.priority, reviewed: decisions.priorityReviewed })
+          .from(decisions)
+          .where(eq(decisions.ticketId, ticketId))
+          .get();
+        if (!current) return false;
+        tx.update(decisions)
+          .set(
+            current.reviewed
+              ? { priority: value }
+              : { priority: value, replacedPriority: current.priority, priorityReviewed: true },
+          )
+          .where(eq(decisions.ticketId, ticketId))
+          .run();
+        return true;
+      });
+    },
+    priorityAggregates() {
+      return db
+        .select({
+          categoryId: decisions.categoryId,
+          priority: decisions.priority,
+          replacedPriority: decisions.replacedPriority,
+          reviewed: decisions.priorityReviewed,
+          count: count(),
+        })
+        .from(decisions)
+        .groupBy(decisions.categoryId, decisions.priority, decisions.replacedPriority, decisions.priorityReviewed)
+        .all()
+        .flatMap((row) => {
+          // A value that no longer validates is left out rather than guessed.
+          const parsed = PriorityAggregateSchema.safeParse(row);
+          return parsed.success ? [parsed.data] : [];
+        });
+    },
+    listCategories() {
+      return db
+        .select()
+        .from(categories)
+        .orderBy(categories.id)
+        .all()
+        .map((row) => toCategory(row));
+    },
+    insertCategory(input) {
+      const category = CategorySchema.parse({ ...CreateCategorySchema.parse(input), active: true });
+      db.insert(categories).values(toCategoryRow(category)).run();
+      return category;
+    },
+    updateCategory(input) {
+      return db.transaction((tx) => {
+        const row = tx.select().from(categories).where(eq(categories.id, input.id)).get();
+        if (!row) return null;
+        const current = toCategory(row);
+        const next = CategorySchema.parse({
+          id: current.id,
+          name: input.name ?? current.name,
+          description: input.description ?? current.description,
+          active: input.active ?? current.active,
+          defaultPriority: input.defaultPriority ?? current.defaultPriority,
+          examples: input.examples ?? current.examples,
+        });
+        const { id: _id, ...changes } = toCategoryRow(next);
+        tx.update(categories).set(changes).where(eq(categories.id, current.id)).run();
+        return next;
+      });
+    },
+    deleteCategory(id) {
+      return db.transaction((tx) => {
+        const current = tx.select({ id: categories.id }).from(categories).where(eq(categories.id, id)).get();
+        if (!current) return 'missing' as const;
+        const used = tx
+          .select({ n: count() })
+          .from(decisions)
+          .where(or(eq(decisions.categoryId, id), eq(decisions.replacedCategoryId, id)))
+          .get();
+        if ((used?.n ?? 0) > 0) return 'referenced' as const;
+        tx.delete(categories).where(eq(categories.id, id)).run();
+        return 'deleted' as const;
+      });
     },
     overrideDecision(ticketId, departmentId) {
       return db.transaction((tx) => {

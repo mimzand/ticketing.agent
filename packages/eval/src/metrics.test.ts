@@ -3,12 +3,15 @@ import { buildReport, formatReport } from './metrics.js';
 import { type CaseResult, type Outcome, type SuiteRun } from './run.js';
 import { type Expectation } from './suite.js';
 
-const outcome = (status: Outcome['status'], departmentId: string | null): Outcome => ({
+const outcome = (status: Outcome['status'], departmentId: string | null, extra: Partial<Outcome> = {}): Outcome => ({
   status,
   departmentId,
   confidence: 0.9,
   quote: null,
   taxonomyVersion: 2,
+  categoryId: null,
+  priority: null,
+  ...extra,
 });
 const expectation = (status: Expectation['status'], departmentId: string | null): Expectation => ({ status, departmentId });
 
@@ -75,5 +78,32 @@ describe('buildReport', () => {
     expect(text).toContain('Catalogue s/c: taxonomy v2 · sha256 abc123abc123');
     expect(text).toContain('FAIL s/bad: mismatch');
     expect(text).toMatch(/billing\s+100\.0%\s+50\.0%\s+1\/0\/1/);
+  });
+
+  it('scores category and priority apart, only where a case sets them; a priority miss leaves the department lines alone', () => {
+    const departmentOnly = buildReport([
+      run([
+        result('a', expectation('labeled', 'billing'), outcome('labeled', 'billing', { priority: 'low' })),
+        result('b', expectation('labeled', 'billing'), outcome('labeled', 'billing')),
+      ]),
+    ]);
+    expect(departmentOnly.category).toEqual({ scored: 0, matches: 0 });
+    expect(departmentOnly.priority).toEqual({ scored: 0, matches: 0 });
+    expect(formatReport(departmentOnly)).not.toMatch(/^(Category|Priority):/m);
+
+    const withFields = buildReport([
+      run([
+        result('a', { ...expectation('labeled', 'billing'), priority: 'urgent', categoryId: 'outage' }, outcome('labeled', 'billing', { priority: 'low', categoryId: 'outage' })),
+        result('b', { ...expectation('labeled', 'billing'), categoryId: null }, outcome('labeled', 'billing')),
+      ]),
+    ]);
+    expect(withFields.category).toEqual({ scored: 2, matches: 2 });
+    expect(withFields.priority).toEqual({ scored: 1, matches: 0 });
+    expect(withFields.departments).toEqual(departmentOnly.departments);
+    expect(withFields.accuracy).toBe(departmentOnly.accuracy);
+    const text = formatReport(withFields);
+    expect(text).toContain('Category: 100.0% (2/2 cases that set it)');
+    expect(text).toContain('Priority: 0.0% (0/1 cases that set it)');
+    expect(text).toMatch(/billing\s+100\.0%\s+100\.0%\s+2\/0\/0/);
   });
 });

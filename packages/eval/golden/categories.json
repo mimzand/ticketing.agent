@@ -1,0 +1,663 @@
+{
+  "formatVersion": 1,
+  "suite": "categories",
+  "threshold": 0.7,
+  "catalogues": {
+    "default": [
+      {
+        "id": "billing",
+        "name": "Billing",
+        "description": "Invoices, payments, refunds, and receipts."
+      },
+      {
+        "id": "it",
+        "name": "IT",
+        "description": "Laptops, accounts, VPN, printers, web services, and software."
+      }
+    ]
+  },
+  "categories": {
+    "default": [
+      {
+        "id": "billing-error",
+        "name": "Billing error",
+        "description": "A wrong or duplicate charge.",
+        "defaultPriority": "normal"
+      },
+      {
+        "id": "outage",
+        "name": "Outage",
+        "description": "A service customers or staff use is down.",
+        "defaultPriority": "urgent",
+        "examples": [
+          "The website returns error 500"
+        ]
+      },
+      {
+        "id": "how-to",
+        "name": "How-to",
+        "description": "A usage question.",
+        "defaultPriority": "low"
+      },
+      {
+        "id": "furniture",
+        "name": "Furniture",
+        "description": "Office furniture.",
+        "defaultPriority": "low",
+        "active": false
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "category-and-priority-stored",
+      "source": "golden",
+      "description": "A valid category and priority are stored beside the department.",
+      "catalogue": "default",
+      "ticket": {
+        "externalId": "c-001",
+        "subject": "Invoice 5120 charged twice",
+        "body": "Invoice 5120 was charged twice.",
+        "channel": "email"
+      },
+      "reply": {
+        "kind": "scripted",
+        "output": {
+          "departmentId": "billing",
+          "confidence": 0.92,
+          "rationale": "Duplicate charge.",
+          "quote": "Invoice 5120 charged twice",
+          "categoryId": "billing-error",
+          "priority": "high"
+        }
+      },
+      "expect": {
+        "status": "labeled",
+        "departmentId": "billing",
+        "categoryId": "billing-error",
+        "priority": "high",
+        "systemIncludes": [
+          "- id: billing-error",
+          "  default priority: normal"
+        ]
+      }
+    },
+    {
+      "id": "unknown-category-bad-priority",
+      "source": "golden",
+      "description": "An unknown category and a priority that is not one of the four become null; the department stays labeled.",
+      "catalogue": "default",
+      "ticket": {
+        "externalId": "c-002",
+        "subject": "Refund for order 8812",
+        "body": "Where is my refund for order 8812?",
+        "channel": "chat"
+      },
+      "reply": {
+        "kind": "scripted",
+        "output": {
+          "departmentId": "billing",
+          "confidence": 0.95,
+          "rationale": "Refund.",
+          "quote": "refund for order 8812",
+          "categoryId": "refunds",
+          "priority": "High"
+        }
+      },
+      "expect": {
+        "status": "labeled",
+        "departmentId": "billing",
+        "confidence": "above",
+        "categoryId": null,
+        "priority": null
+      }
+    },
+    {
+      "id": "inactive-category-not-applied",
+      "source": "golden",
+      "description": "An inactive category is not applied, and a missing priority stays null (no category default).",
+      "catalogue": "default",
+      "ticket": {
+        "externalId": "c-003",
+        "subject": "Chair broken",
+        "body": "The chair at desk 3 is broken.",
+        "channel": "email"
+      },
+      "reply": {
+        "kind": "scripted",
+        "output": {
+          "departmentId": "it",
+          "confidence": 0.8,
+          "rationale": "Equipment.",
+          "categoryId": "furniture"
+        }
+      },
+      "expect": {
+        "status": "labeled",
+        "departmentId": "it",
+        "categoryId": null,
+        "priority": null,
+        "systemExcludes": [
+          "- id: furniture"
+        ]
+      }
+    },
+    {
+      "id": "trend-from-five-reviewed",
+      "source": "golden",
+      "description": "Five admin-reviewed outage tickets give the outage trend line in the instruction.",
+      "catalogue": "default",
+      "earlier": [
+        {
+          "ticket": {
+            "externalId": "t5-1",
+            "subject": "Service t5 1 is down",
+            "body": "The status page shows an error.",
+            "channel": "email"
+          },
+          "reply": {
+            "kind": "scripted",
+            "output": {
+              "departmentId": "it",
+              "confidence": 0.9,
+              "rationale": "Service problem.",
+              "categoryId": "outage",
+              "priority": "high"
+            }
+          },
+          "priority": "urgent"
+        },
+        {
+          "ticket": {
+            "externalId": "t5-2",
+            "subject": "Service t5 2 is down",
+            "body": "The status page shows an error.",
+            "channel": "email"
+          },
+          "reply": {
+            "kind": "scripted",
+            "output": {
+              "departmentId": "it",
+              "confidence": 0.9,
+              "rationale": "Service problem.",
+              "categoryId": "outage",
+              "priority": "high"
+            }
+          },
+          "priority": "urgent"
+        },
+        {
+          "ticket": {
+            "externalId": "t5-3",
+            "subject": "Service t5 3 is down",
+            "body": "The status page shows an error.",
+            "channel": "email"
+          },
+          "reply": {
+            "kind": "scripted",
+            "output": {
+              "departmentId": "it",
+              "confidence": 0.9,
+              "rationale": "Service problem.",
+              "categoryId": "outage",
+              "priority": "high"
+            }
+          },
+          "priority": "urgent"
+        },
+        {
+          "ticket": {
+            "externalId": "t5-4",
+            "subject": "Service t5 4 is down",
+            "body": "The status page shows an error.",
+            "channel": "email"
+          },
+          "reply": {
+            "kind": "scripted",
+            "output": {
+              "departmentId": "it",
+              "confidence": 0.9,
+              "rationale": "Service problem.",
+              "categoryId": "outage",
+              "priority": "high"
+            }
+          },
+          "priority": "urgent"
+        },
+        {
+          "ticket": {
+            "externalId": "t5-5",
+            "subject": "Service t5 5 is down",
+            "body": "The status page shows an error.",
+            "channel": "email"
+          },
+          "reply": {
+            "kind": "scripted",
+            "output": {
+              "departmentId": "it",
+              "confidence": 0.9,
+              "rationale": "Service problem.",
+              "categoryId": "outage",
+              "priority": "high"
+            }
+          },
+          "priority": "urgent"
+        }
+      ],
+      "ticket": {
+        "externalId": "c-004",
+        "subject": "Checkout page returns an error",
+        "body": "Customers cannot pay; the checkout page shows error 500.",
+        "channel": "email"
+      },
+      "reply": {
+        "kind": "scripted",
+        "output": {
+          "departmentId": "it",
+          "confidence": 0.88,
+          "rationale": "Web shop failure.",
+          "quote": "checkout page shows error 500",
+          "categoryId": "outage",
+          "priority": "urgent"
+        }
+      },
+      "expect": {
+        "status": "labeled",
+        "departmentId": "it",
+        "categoryId": "outage",
+        "priority": "urgent",
+        "systemIncludes": [
+          "Admin priority record",
+          "- outage: 5 reviewed; admin result urgent 5/5. Of those 5, the model had said high on 5."
+        ]
+      }
+    },
+    {
+      "id": "no-trend-at-four-reviewed",
+      "source": "golden",
+      "description": "Four reviewed tickets are not enough for a trend line.",
+      "catalogue": "default",
+      "earlier": [
+        {
+          "ticket": {
+            "externalId": "t4-1",
+            "subject": "Service t4 1 is down",
+            "body": "The status page shows an error.",
+            "channel": "email"
+          },
+          "reply": {
+            "kind": "scripted",
+            "output": {
+              "departmentId": "it",
+              "confidence": 0.9,
+              "rationale": "Service problem.",
+              "categoryId": "outage",
+              "priority": "high"
+            }
+          },
+          "priority": "urgent"
+        },
+        {
+          "ticket": {
+            "externalId": "t4-2",
+            "subject": "Service t4 2 is down",
+            "body": "The status page shows an error.",
+            "channel": "email"
+          },
+          "reply": {
+            "kind": "scripted",
+            "output": {
+              "departmentId": "it",
+              "confidence": 0.9,
+              "rationale": "Service problem.",
+              "categoryId": "outage",
+              "priority": "high"
+            }
+          },
+          "priority": "urgent"
+        },
+        {
+          "ticket": {
+            "externalId": "t4-3",
+            "subject": "Service t4 3 is down",
+            "body": "The status page shows an error.",
+            "channel": "email"
+          },
+          "reply": {
+            "kind": "scripted",
+            "output": {
+              "departmentId": "it",
+              "confidence": 0.9,
+              "rationale": "Service problem.",
+              "categoryId": "outage",
+              "priority": "high"
+            }
+          },
+          "priority": "urgent"
+        },
+        {
+          "ticket": {
+            "externalId": "t4-4",
+            "subject": "Service t4 4 is down",
+            "body": "The status page shows an error.",
+            "channel": "email"
+          },
+          "reply": {
+            "kind": "scripted",
+            "output": {
+              "departmentId": "it",
+              "confidence": 0.9,
+              "rationale": "Service problem.",
+              "categoryId": "outage",
+              "priority": "high"
+            }
+          },
+          "priority": "urgent"
+        }
+      ],
+      "ticket": {
+        "externalId": "c-005",
+        "subject": "Checkout page returns an error",
+        "body": "Customers cannot pay; the checkout page shows error 500.",
+        "channel": "email"
+      },
+      "reply": {
+        "kind": "scripted",
+        "output": {
+          "departmentId": "it",
+          "confidence": 0.88,
+          "rationale": "Web shop failure.",
+          "quote": "checkout page shows error 500",
+          "categoryId": "outage",
+          "priority": "urgent"
+        }
+      },
+      "expect": {
+        "status": "labeled",
+        "departmentId": "it",
+        "categoryId": "outage",
+        "priority": "urgent",
+        "systemExcludes": [
+          "Admin priority record",
+          "outage: 4 reviewed"
+        ]
+      }
+    },
+    {
+      "id": "unreviewed-model-rows-do-not-count",
+      "source": "golden",
+      "description": "Model rows nobody reviewed never make a trend line.",
+      "catalogue": "default",
+      "earlier": [
+        {
+          "ticket": {
+            "externalId": "u6-1",
+            "subject": "Service u6 1 is down",
+            "body": "The status page shows an error.",
+            "channel": "email"
+          },
+          "reply": {
+            "kind": "scripted",
+            "output": {
+              "departmentId": "it",
+              "confidence": 0.9,
+              "rationale": "Service problem.",
+              "categoryId": "outage",
+              "priority": "high"
+            }
+          }
+        },
+        {
+          "ticket": {
+            "externalId": "u6-2",
+            "subject": "Service u6 2 is down",
+            "body": "The status page shows an error.",
+            "channel": "email"
+          },
+          "reply": {
+            "kind": "scripted",
+            "output": {
+              "departmentId": "it",
+              "confidence": 0.9,
+              "rationale": "Service problem.",
+              "categoryId": "outage",
+              "priority": "high"
+            }
+          }
+        },
+        {
+          "ticket": {
+            "externalId": "u6-3",
+            "subject": "Service u6 3 is down",
+            "body": "The status page shows an error.",
+            "channel": "email"
+          },
+          "reply": {
+            "kind": "scripted",
+            "output": {
+              "departmentId": "it",
+              "confidence": 0.9,
+              "rationale": "Service problem.",
+              "categoryId": "outage",
+              "priority": "high"
+            }
+          }
+        },
+        {
+          "ticket": {
+            "externalId": "u6-4",
+            "subject": "Service u6 4 is down",
+            "body": "The status page shows an error.",
+            "channel": "email"
+          },
+          "reply": {
+            "kind": "scripted",
+            "output": {
+              "departmentId": "it",
+              "confidence": 0.9,
+              "rationale": "Service problem.",
+              "categoryId": "outage",
+              "priority": "high"
+            }
+          }
+        },
+        {
+          "ticket": {
+            "externalId": "u6-5",
+            "subject": "Service u6 5 is down",
+            "body": "The status page shows an error.",
+            "channel": "email"
+          },
+          "reply": {
+            "kind": "scripted",
+            "output": {
+              "departmentId": "it",
+              "confidence": 0.9,
+              "rationale": "Service problem.",
+              "categoryId": "outage",
+              "priority": "high"
+            }
+          }
+        },
+        {
+          "ticket": {
+            "externalId": "u6-6",
+            "subject": "Service u6 6 is down",
+            "body": "The status page shows an error.",
+            "channel": "email"
+          },
+          "reply": {
+            "kind": "scripted",
+            "output": {
+              "departmentId": "it",
+              "confidence": 0.9,
+              "rationale": "Service problem.",
+              "categoryId": "outage",
+              "priority": "high"
+            }
+          }
+        }
+      ],
+      "ticket": {
+        "externalId": "c-006",
+        "subject": "Checkout page returns an error",
+        "body": "Customers cannot pay; the checkout page shows error 500.",
+        "channel": "email"
+      },
+      "reply": {
+        "kind": "scripted",
+        "output": {
+          "departmentId": "it",
+          "confidence": 0.88,
+          "rationale": "Web shop failure.",
+          "quote": "checkout page shows error 500",
+          "categoryId": "outage",
+          "priority": "urgent"
+        }
+      },
+      "expect": {
+        "status": "labeled",
+        "departmentId": "it",
+        "systemExcludes": [
+          "Admin priority record"
+        ]
+      }
+    },
+    {
+      "id": "admin-category-move-changes-bucket",
+      "source": "golden",
+      "description": "Tickets the model put in outage but an admin moved to how-to count for how-to.",
+      "catalogue": "default",
+      "earlier": [
+        {
+          "ticket": {
+            "externalId": "mv-1",
+            "subject": "Service mv 1 is down",
+            "body": "The status page shows an error.",
+            "channel": "email"
+          },
+          "reply": {
+            "kind": "scripted",
+            "output": {
+              "departmentId": "it",
+              "confidence": 0.9,
+              "rationale": "Service problem.",
+              "categoryId": "outage",
+              "priority": "normal"
+            }
+          },
+          "category": "how-to",
+          "priority": "low"
+        },
+        {
+          "ticket": {
+            "externalId": "mv-2",
+            "subject": "Service mv 2 is down",
+            "body": "The status page shows an error.",
+            "channel": "email"
+          },
+          "reply": {
+            "kind": "scripted",
+            "output": {
+              "departmentId": "it",
+              "confidence": 0.9,
+              "rationale": "Service problem.",
+              "categoryId": "outage",
+              "priority": "normal"
+            }
+          },
+          "category": "how-to",
+          "priority": "low"
+        },
+        {
+          "ticket": {
+            "externalId": "mv-3",
+            "subject": "Service mv 3 is down",
+            "body": "The status page shows an error.",
+            "channel": "email"
+          },
+          "reply": {
+            "kind": "scripted",
+            "output": {
+              "departmentId": "it",
+              "confidence": 0.9,
+              "rationale": "Service problem.",
+              "categoryId": "outage",
+              "priority": "normal"
+            }
+          },
+          "category": "how-to",
+          "priority": "low"
+        },
+        {
+          "ticket": {
+            "externalId": "mv-4",
+            "subject": "Service mv 4 is down",
+            "body": "The status page shows an error.",
+            "channel": "email"
+          },
+          "reply": {
+            "kind": "scripted",
+            "output": {
+              "departmentId": "it",
+              "confidence": 0.9,
+              "rationale": "Service problem.",
+              "categoryId": "outage",
+              "priority": "normal"
+            }
+          },
+          "category": "how-to",
+          "priority": "low"
+        },
+        {
+          "ticket": {
+            "externalId": "mv-5",
+            "subject": "Service mv 5 is down",
+            "body": "The status page shows an error.",
+            "channel": "email"
+          },
+          "reply": {
+            "kind": "scripted",
+            "output": {
+              "departmentId": "it",
+              "confidence": 0.9,
+              "rationale": "Service problem.",
+              "categoryId": "outage",
+              "priority": "normal"
+            }
+          },
+          "category": "how-to",
+          "priority": "low"
+        }
+      ],
+      "ticket": {
+        "externalId": "c-007",
+        "subject": "Checkout page returns an error",
+        "body": "Customers cannot pay; the checkout page shows error 500.",
+        "channel": "email"
+      },
+      "reply": {
+        "kind": "scripted",
+        "output": {
+          "departmentId": "it",
+          "confidence": 0.88,
+          "rationale": "Web shop failure.",
+          "quote": "checkout page shows error 500",
+          "categoryId": "outage",
+          "priority": "urgent"
+        }
+      },
+      "expect": {
+        "status": "labeled",
+        "departmentId": "it",
+        "categoryId": "outage",
+        "systemIncludes": [
+          "- how-to: 5 reviewed; admin result low 5/5. Of those 5, the model had said normal on 5."
+        ],
+        "systemExcludes": [
+          "outage: 5 reviewed"
+        ]
+      }
+    }
+  ]
+}

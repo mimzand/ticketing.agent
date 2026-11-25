@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { type AgentStatusEvent, type DesktopHealth } from '@ticket/shared';
 import { onBeforeUnmount, onMounted, ref } from 'vue';
+import CategoriesSection from './sections/CategoriesSection.vue';
 import DepartmentsSection from './sections/DepartmentsSection.vue';
 import SettingsSection from './sections/SettingsSection.vue';
 import TicketsSection from './sections/TicketsSection.vue';
 
-type Section = 'tickets' | 'departments' | 'settings';
+type Section = 'tickets' | 'departments' | 'categories' | 'settings';
 const SECTIONS: readonly { id: Section; label: string }[] = [
   { id: 'tickets', label: 'Tickets' },
   { id: 'departments', label: 'Departments' },
+  { id: 'categories', label: 'Categories' },
   { id: 'settings', label: 'Settings' },
 ];
 const POLL_MS = 5_000;
@@ -114,6 +116,7 @@ onBeforeUnmount(() => {
     <main class="content">
       <TicketsSection v-if="section === 'tickets'" />
       <DepartmentsSection v-else-if="section === 'departments'" />
+      <CategoriesSection v-else-if="section === 'categories'" />
       <SettingsSection v-else />
     </main>
   </div>

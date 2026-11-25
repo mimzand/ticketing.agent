@@ -91,6 +91,10 @@ the app", "Attached", or "Reconnecting…" while a crashed agent is restarted).
   department, and belongs to one department only; an example is at most 300 characters, at
   most 20 per department. The heading shows the current **Taxonomy vN**, and **Taxonomy
   history** at the bottom lists every version (time, department count), read only.
+- **Categories**: problem categories (the kind of problem, beside the handling department), each with
+  a required default priority and optional examples. The classifier picks one active category and a
+  priority (low, normal, high, urgent); in the ticket detail an admin can set either. The ticket list
+  shows the category and priority, and the model's value when an admin changed it.
 - **Settings**: the theme switch (dark by default, remembered in the renderer's localStorage)
   and four categories:
   - *Ollama Connection*: server URL, connection timeout, **Test connection** (tests the URL in

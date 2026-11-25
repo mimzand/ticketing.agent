@@ -1,5 +1,5 @@
 import { createAgentHost } from '@ticket/agent-host';
-import { type DecisionStatus } from '@ticket/shared';
+import { type DecisionStatus, type TicketPriority } from '@ticket/shared';
 import { openTicketDatabase } from '@ticket/storage';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -22,6 +22,9 @@ export interface Outcome {
   readonly confidence: number;
   readonly quote: string | null;
   readonly taxonomyVersion: number;
+  /** The stored category and priority (scored only when a case expects them). */
+  readonly categoryId: string | null;
+  readonly priority: TicketPriority | null;
 }
 
 export interface CaseResult {
@@ -60,7 +63,7 @@ export function catalogueHash(departments: readonly CatalogueDepartment[]): stri
 }
 
 /** Problems of an outcome against an expectation. Empty when it holds. */
-export function judge(expected: Expectation, actual: Outcome, threshold: number): string[] {
+export function judge(expected: Expectation, actual: Outcome, threshold: number, system = ''): string[] {
   const problems: string[] = [];
   if (actual.status !== expected.status) problems.push(`status ${actual.status}, expected ${expected.status}`);
   if (actual.departmentId !== expected.departmentId) {
@@ -75,6 +78,19 @@ export function judge(expected: Expectation, actual: Outcome, threshold: number)
   if (expected.quote !== undefined && actual.quote !== expected.quote) {
     problems.push(actual.quote === null ? 'quote dropped, expected one' : 'quote differs from expected');
   }
+  if (expected.categoryId !== undefined && actual.categoryId !== expected.categoryId) {
+    problems.push(`category ${actual.categoryId ?? 'none'}, expected ${expected.categoryId ?? 'none'}`);
+  }
+  if (expected.priority !== undefined && actual.priority !== expected.priority) {
+    problems.push(`priority ${actual.priority ?? 'none'}, expected ${expected.priority ?? 'none'}`);
+  }
+  // Report which expectation failed, not the instruction text itself.
+  (expected.systemIncludes ?? []).forEach((text, index) => {
+    if (!system.includes(text)) problems.push(`instruction is missing systemIncludes[${index}]`);
+  });
+  (expected.systemExcludes ?? []).forEach((text, index) => {
+    if (system.includes(text)) problems.push(`instruction contains systemExcludes[${index}]`);
+  });
   return problems;
 }
 
@@ -87,11 +103,16 @@ async function classifyCase(
   file: SuiteFile,
   evalCase: EvalCase,
   reply: ModelReply,
-): Promise<{ outcome: Outcome; problems: string[] }> {
+): Promise<{ outcome: Outcome; problems: string[]; system: string }> {
   const dir = mkdtempSync(join(tmpdir(), 'ticket-eval-'));
   const db = openTicketDatabase(join(dir, 'tickets.db'));
   try {
-    const fake = createFakeOllama([...evalCase.history.map((entry) => entry.reply), reply]);
+    const earlier = evalCase.earlier ?? [];
+    const fake = createFakeOllama([
+      ...earlier.map((entry) => entry.reply),
+      ...evalCase.history.map((entry) => entry.reply),
+      reply,
+    ]);
     const host = createAgentHost({
       db,
       // Only these variables: no token and nothing else from the caller's environment.
@@ -106,6 +127,16 @@ async function classifyCase(
       const { active, ...create } = department;
       host.createDepartment(create);
       if (!active) host.updateDepartment({ id: department.id, active: false });
+    }
+    for (const category of file.categories?.[evalCase.catalogue] ?? []) {
+      const { active, ...create } = category;
+      host.createCategory(create);
+      if (!active) host.updateCategory({ id: category.id, active: false });
+    }
+    for (const entry of earlier) {
+      const view = await host.classify(entry.ticket);
+      if (entry.category) host.setCategory({ id: view.id, categoryId: entry.category });
+      if (entry.priority) host.setPriority({ id: view.id, priority: entry.priority });
     }
     for (const entry of evalCase.history) {
       const view = await host.classify(entry.ticket);
@@ -123,8 +154,11 @@ async function classifyCase(
         confidence: decision.confidence,
         quote: decision.quote,
         taxonomyVersion: decision.taxonomyVersion,
+        categoryId: decision.categoryId,
+        priority: decision.priority,
       },
       problems,
+      system: fake.requests.at(-1)?.system ?? '',
     };
   } finally {
     db.close();
@@ -141,11 +175,11 @@ export async function runCase(file: SuiteFile, evalCase: EvalCase): Promise<Case
     expected: evalCase.expect,
   };
   try {
-    const { outcome, problems } = await classifyCase(file, evalCase, evalCase.reply);
-    problems.push(...judge(evalCase.expect, outcome, file.threshold));
+    const { outcome, problems, system } = await classifyCase(file, evalCase, evalCase.reply);
+    problems.push(...judge(evalCase.expect, outcome, file.threshold, system));
     if (evalCase.wrongReply) {
       const wrong = await classifyCase(file, evalCase, evalCase.wrongReply);
-      if (judge(evalCase.expect, wrong.outcome, file.threshold).length === 0) {
+      if (judge(evalCase.expect, wrong.outcome, file.threshold, wrong.system).length === 0) {
         problems.push('wrongReply also meets the expectation, so the case cannot catch that answer');
       }
     }

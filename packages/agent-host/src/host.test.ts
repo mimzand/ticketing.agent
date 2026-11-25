@@ -1,11 +1,11 @@
 import { openTicketDatabase, type TicketDatabase } from '@ticket/storage';
-import { DEPARTMENT_IN_USE_MESSAGE } from '@ticket/shared';
+import { CATEGORY_IN_USE_MESSAGE, DEPARTMENT_IN_USE_MESSAGE } from '@ticket/shared';
 import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createAgentHost, type AgentHostOptions } from './host.js';
+import { createAgentHost, HostError, type AgentHostOptions } from './host.js';
 
 let server: Server | undefined;
 let db: TicketDatabase | undefined;
@@ -755,4 +755,227 @@ describe('override feedback export', () => {
     // Read only: the catalogue is unchanged.
     expect(host.listDepartments().find((d) => d.id === 'it')?.examples).toEqual([]);
   }, 30_000);
+});
+
+describe('problem categories and priority', () => {
+  const lastChat = () => seen.filter((r) => r.path === '/api/chat').at(-1) ?? { system: '', user: '' };
+  const base = { departmentId: 'billing', confidence: 0.9, rationale: 'Invoice.', quote: 'Invoice 18' };
+  let n = 0;
+  const next = (extra: Record<string, unknown> = {}) => ({
+    externalId: `p-${(n += 1)}`,
+    subject: 'Invoice 18 is wrong',
+    body: 'The secret body text 4711.',
+    channel: 'email',
+    ...extra,
+  });
+
+  function withCategories(host: ReturnType<typeof hostFor>) {
+    host.createCategory({ id: 'outage', name: 'Outage', description: 'A service is down', defaultPriority: 'urgent' });
+    host.createCategory({ id: 'how-to', name: 'How-to', description: 'A usage question', defaultPriority: 'low' });
+    return host;
+  }
+
+  it('manages categories like departments: default priority required, id fixed, inactive kept, delete refused while stored', async () => {
+    let reply: unknown = { ...base, categoryId: 'outage', priority: 'high' };
+    const host = withCategories(hostFor(await fakeOllama(() => reply)));
+    expect(() => host.createCategory({ id: 'x', name: 'X', description: '' } as never)).toThrow(HostError);
+    expect(() => host.createCategory({ id: 'outage', name: 'Again', description: '', defaultPriority: 'low' })).toThrow(
+      expect.objectContaining({ code: 'conflict' }),
+    );
+    expect(() => host.updateCategory({ id: 'nope', active: false })).toThrow(expect.objectContaining({ code: 'not_found' }));
+    expect(host.updateCategory({ id: 'how-to', examples: ['How do I export?'] }).examples).toEqual(['How do I export?']);
+
+    const ticket = await host.classify(next());
+    host.setCategory({ id: ticket.id, categoryId: 'how-to' });
+    // outage is now only the replaced category; both ids are still stored.
+    for (const id of ['outage', 'how-to']) {
+      expect(() => host.deleteCategory({ id })).toThrow(expect.objectContaining({ code: 'conflict', message: CATEGORY_IN_USE_MESSAGE }));
+    }
+    host.createCategory({ id: 'spare', name: 'Spare', description: '', defaultPriority: 'normal' });
+    expect(host.deleteCategory({ id: 'spare' })).toEqual({ id: 'spare', deleted: true });
+    expect(() => host.deleteCategory({ id: 'spare' })).toThrow(expect.objectContaining({ code: 'not_found' }));
+
+    // Deactivated: still listed, and neither the model nor an admin can assign it.
+    host.updateCategory({ id: 'outage', active: false });
+    expect(host.listCategories().find((c) => c.id === 'outage')?.active).toBe(false);
+    reply = { ...base, categoryId: 'outage', priority: 'urgent' };
+    const after = await host.classify(next());
+    expect(after.decision).toMatchObject({ status: 'labeled', departmentId: 'billing', categoryId: null, priority: 'urgent' });
+    expect(lastChat().system).not.toContain('- id: outage');
+    expect(() => host.setCategory({ id: after.id, categoryId: 'outage' })).toThrow('That category is not active.');
+    expect(() => host.setCategory({ id: after.id, categoryId: 'unknown' })).toThrow('That category is not active.');
+    expect(taxonomyOf(host)).toBe(1);
+  }, 30_000);
+
+  function taxonomyOf(host: ReturnType<typeof hostFor>) {
+    return host.taxonomy().current;
+  }
+
+  it('stores a valid category and priority beside the department decision', async () => {
+    const host = withCategories(hostFor(await fakeOllama(() => ({ ...base, categoryId: 'outage', priority: 'high' }))));
+    const view = await host.classify(next());
+    expect(view.decision).toEqual({
+      departmentId: 'billing',
+      confidence: 0.9,
+      rationale: 'Invoice.',
+      status: 'labeled',
+      quote: 'Invoice 18',
+      taxonomyVersion: 1,
+      categoryId: 'outage',
+      replacedCategoryId: null,
+      categoryReviewed: false,
+      priority: 'high',
+      replacedPriority: null,
+      priorityReviewed: false,
+    });
+  }, 30_000);
+
+  it.each([
+    ['an unknown category and a priority in the wrong case', { categoryId: 'outages', priority: 'High' }],
+    ['a name instead of an id and an invented priority', { categoryId: 'Outage', priority: 'critical' }],
+    ['wrong types', { categoryId: 7, priority: 3 }],
+    ['no category and no priority', {}],
+  ])('keeps the department and stores null for %s', async (_name, extra) => {
+    const host = withCategories(hostFor(await fakeOllama(() => ({ ...base, ...extra }))));
+    const view = await host.classify(next());
+    expect(view.decision).toMatchObject({
+      status: 'labeled',
+      departmentId: 'billing',
+      quote: 'Invoice 18',
+      categoryId: null,
+      priority: null,
+    });
+  }, 30_000);
+
+  it('never fills the priority from the category default', async () => {
+    const host = withCategories(hostFor(await fakeOllama(() => ({ ...base, categoryId: 'outage' }))));
+    const view = await host.classify(next());
+    expect(view.decision).toMatchObject({ categoryId: 'outage', priority: null });
+  }, 30_000);
+
+  it('with no categories the model still gives a priority, and any category id is dropped', async () => {
+    const host = hostFor(await fakeOllama(() => ({ ...base, categoryId: 'outage', priority: 'low' })));
+    const view = await host.classify(next());
+    expect(view.decision).toMatchObject({ status: 'labeled', categoryId: null, priority: 'low' });
+    expect(lastChat().system).toContain('(no categories)');
+  }, 30_000);
+
+  it('a low-confidence department stays needs_review and keeps a valid category and priority', async () => {
+    const host = withCategories(hostFor(await fakeOllama(() => ({ ...base, confidence: 0.3, categoryId: 'how-to', priority: 'low' }))));
+    const view = await host.classify(next());
+    expect(view.decision).toMatchObject({ status: 'needs_review', departmentId: null, categoryId: 'how-to', priority: 'low' });
+  }, 30_000);
+
+  it('a failed classify stores no category and no priority', async () => {
+    const host = withCategories(hostFor(DEAD_URL));
+    const view = await host.classify(next());
+    expect(view.decision).toMatchObject({ status: 'failed', categoryId: null, priority: null });
+  }, 30_000);
+
+  it('admin writes: the first keeps the model value, the second changes only the value, and department fields never move', async () => {
+    const host = withCategories(hostFor(await fakeOllama(() => ({ ...base, categoryId: 'outage', priority: 'normal' }))));
+    host.createCategory({ id: 'hardware', name: 'Hardware', description: '', defaultPriority: 'normal' });
+    host.createDepartment({ id: 'it', name: 'IT', description: 'Computers' });
+    const view = await host.classify(next());
+    const department = {
+      departmentId: view.decision.departmentId,
+      confidence: view.decision.confidence,
+      rationale: view.decision.rationale,
+      status: view.decision.status,
+      quote: view.decision.quote,
+      taxonomyVersion: view.decision.taxonomyVersion,
+    };
+
+    const first = host.setCategory({ id: view.id, categoryId: 'how-to' });
+    expect(first.decision).toEqual({
+      ...view.decision,
+      categoryId: 'how-to',
+      replacedCategoryId: 'outage',
+      categoryReviewed: true,
+    });
+    const second = host.setCategory({ id: view.id, categoryId: 'hardware' });
+    expect(second.decision).toMatchObject({ ...department, categoryId: 'hardware', replacedCategoryId: 'outage', priority: 'normal', priorityReviewed: false });
+
+    const p1 = host.setPriority({ id: view.id, priority: 'urgent' });
+    expect(p1.decision).toMatchObject({ ...department, priority: 'urgent', replacedPriority: 'normal', priorityReviewed: true, categoryId: 'hardware' });
+    const p2 = host.setPriority({ id: view.id, priority: 'high' });
+    expect(p2.decision).toMatchObject({ ...department, priority: 'high', replacedPriority: 'normal', categoryReviewed: true, replacedCategoryId: 'outage' });
+
+    // tickets.override stays department-only.
+    const overridden = host.override({ id: view.id, departmentId: 'it' });
+    expect(overridden.decision).toMatchObject({
+      status: 'overridden',
+      departmentId: 'it',
+      categoryId: 'hardware',
+      replacedCategoryId: 'outage',
+      priority: 'high',
+      replacedPriority: 'normal',
+    });
+
+    expect(() => host.setPriority({ id: view.id, priority: 'critical' as never })).toThrow(/one of low, normal, high, urgent/);
+    const missing = '00000000-0000-4000-8000-00000000dead';
+    expect(() => host.setPriority({ id: missing, priority: 'low' })).toThrow(expect.objectContaining({ code: 'not_found' }));
+    expect(() => host.setCategory({ id: missing, categoryId: 'how-to' })).toThrow(expect.objectContaining({ code: 'not_found' }));
+  }, 30_000);
+
+  it('confirming the model priority counts as a review', async () => {
+    const host = withCategories(hostFor(await fakeOllama(() => ({ ...base, categoryId: 'outage', priority: 'urgent' }))));
+    const view = await host.classify(next());
+    expect(host.setPriority({ id: view.id, priority: 'urgent' }).decision).toMatchObject({
+      priority: 'urgent',
+      replacedPriority: 'urgent',
+      priorityReviewed: true,
+      categoryReviewed: false,
+    });
+  }, 30_000);
+
+  it('puts the catalogue in the instruction, keeps ticket text out of it, and keeps the sender block free of priority', async () => {
+    const host = withCategories(hostFor(await fakeOllama(() => ({ ...base, categoryId: 'outage', priority: 'high' }))));
+    const email = 'ann@example.com';
+    const first = await host.classify(next({ email }));
+    host.setPriority({ id: first.id, priority: 'urgent' });
+    host.setCategory({ id: first.id, categoryId: 'how-to' });
+    await host.classify(next({ email, subject: 'Second invoice 18' }));
+    const { system, user } = lastChat();
+    expect(system).toContain('- id: outage');
+    expect(system).toContain('  default priority: urgent');
+    expect(system).not.toContain('The secret body text 4711.');
+    expect(system).not.toContain('Invoice 18 is wrong');
+    expect(user).toContain('The secret body text 4711.');
+    expect(user).toContain('earlier tickets from the same sender');
+    const block = user.slice(user.indexOf('--- earlier tickets'));
+    expect(block).not.toMatch(/priority|categor|urgent|how-to/i);
+  }, 30_000);
+
+  it('adds a trend line only from 5 admin-reviewed tickets, by final category; untouched model rows never count', async () => {
+    let reply: unknown = { ...base, categoryId: 'outage', priority: 'normal' };
+    const host = withCategories(hostFor(await fakeOllama(() => reply)));
+    // Model rows nobody reviewed: many, but they must not count.
+    for (let i = 0; i < 6; i += 1) await host.classify(next());
+    const reviewed = [];
+    for (let i = 0; i < 4; i += 1) {
+      const view = await host.classify(next());
+      host.setPriority({ id: view.id, priority: i < 3 ? 'urgent' : 'high' });
+      reviewed.push(view);
+    }
+    await host.classify(next());
+    expect(lastChat().system).not.toContain('Admin priority record');
+    expect(lastChat().system).not.toContain('reviewed;');
+
+    const fifth = await host.classify(next());
+    host.setPriority({ id: fifth.id, priority: 'urgent' });
+    await host.classify(next());
+    expect(lastChat().system).toContain(
+      '- outage: 5 reviewed; admin result urgent 4/5. Of those 4, the model had said normal on 4.',
+    );
+
+    // An admin category move takes a reviewed ticket out of the outage bucket.
+    const [moved] = reviewed;
+    if (!moved) throw new Error('fixture');
+    host.setCategory({ id: moved.id, categoryId: 'how-to' });
+    reply = { ...base, categoryId: 'how-to', priority: 'low' };
+    await host.classify(next());
+    expect(lastChat().system).not.toContain('outage: ');
+    expect(lastChat().system).not.toContain('how-to: ');
+  }, 60_000);
 });

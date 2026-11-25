@@ -1,4 +1,4 @@
-import { type Department, type TicketView } from '@ticket/shared';
+import { type Category, type Department, type TicketView } from '@ticket/shared';
 import { describe, expect, it } from 'vitest';
 import { errorMessage, priorTicketLine, senderLabel, senderSummaryLine, ticketFields, ticketRow } from './screen.js';
 
@@ -21,12 +21,32 @@ function ticket(
   status: TicketView['decision']['status'],
   departmentId: string | null,
   quote: string | null = null,
+  extra: Partial<TicketView['decision']> = {},
 ): TicketView {
   return {
     ...base,
-    decision: { status, departmentId, confidence: 0.91, rationale: 'Invoice wording.', quote, taxonomyVersion: 3 },
+    decision: {
+      status,
+      departmentId,
+      confidence: 0.91,
+      rationale: 'Invoice wording.',
+      quote,
+      taxonomyVersion: 3,
+      categoryId: null,
+      replacedCategoryId: null,
+      categoryReviewed: false,
+      priority: null,
+      replacedPriority: null,
+      priorityReviewed: false,
+      ...extra,
+    },
   };
 }
+
+const categories: Category[] = [
+  { id: 'outage', name: 'Outage', description: '', active: true, defaultPriority: 'urgent', examples: [] },
+  { id: 'how-to', name: 'How-to', description: '', active: false, defaultPriority: 'low', examples: [] },
+];
 
 describe('ticketFields', () => {
   it('shows the department for a labeled result', () => {
@@ -64,7 +84,39 @@ describe('ticketRow', () => {
       confidence: '91%',
       channel: 'email',
       created: 'Jan 1',
+      category: null,
+      modelCategory: null,
+      priority: null,
+      modelPriority: null,
     });
+  });
+
+  it('shows the category name and the current priority; no model values while nothing was changed', () => {
+    const row = ticketRow(ticket('labeled', 'billing', null, { categoryId: 'outage', priority: 'high' }), departments, date, categories);
+    expect(row).toMatchObject({ category: 'Outage', modelCategory: null, priority: 'high', modelPriority: null });
+  });
+
+  it('shows the model priority only when an admin reviewed it and it differs', () => {
+    const confirmed = ticket('labeled', 'billing', null, { priority: 'high', replacedPriority: 'high', priorityReviewed: true });
+    expect(ticketRow(confirmed, departments, date, categories).modelPriority).toBeNull();
+    const changed = ticket('labeled', 'billing', null, { priority: 'urgent', replacedPriority: 'normal', priorityReviewed: true });
+    expect(ticketRow(changed, departments, date, categories)).toMatchObject({ priority: 'urgent', modelPriority: 'normal' });
+    const fromNone = ticket('needs_review', null, null, { priority: 'low', replacedPriority: null, priorityReviewed: true });
+    expect(ticketRow(fromNone, departments, date, categories).modelPriority).toBe('none');
+    // Not reviewed: a replaced value alone is not shown.
+    const unreviewed = ticket('labeled', 'billing', null, { priority: 'low', replacedPriority: 'high' });
+    expect(ticketRow(unreviewed, departments, date, categories).modelPriority).toBeNull();
+  });
+
+  it('shows the model category only when an admin changed it, by name, or none', () => {
+    const moved = ticket('labeled', 'billing', null, { categoryId: 'how-to', replacedCategoryId: 'outage', categoryReviewed: true });
+    expect(ticketRow(moved, departments, date, categories)).toMatchObject({ category: 'How-to', modelCategory: 'Outage' });
+    const set = ticket('labeled', 'billing', null, { categoryId: 'outage', replacedCategoryId: null, categoryReviewed: true });
+    expect(ticketRow(set, departments, date, categories).modelCategory).toBe('none');
+    const same = ticket('labeled', 'billing', null, { categoryId: 'outage', replacedCategoryId: 'outage', categoryReviewed: true });
+    expect(ticketRow(same, departments, date, categories).modelCategory).toBeNull();
+    // A removed category shows its id.
+    expect(ticketRow(ticket('labeled', 'billing', null, { categoryId: 'gone' }), departments, date, categories).category).toBe('gone');
   });
 
   it('a needs_review ticket shows no department', () => {

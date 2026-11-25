@@ -22,11 +22,15 @@ describe('OpenAPI', () => {
     expect(doc.openapi).toBe('3.1.0');
     expect(Object.keys(doc.paths).sort()).toEqual([
       '/health',
+      '/v1/categories',
+      '/v1/categories/{id}',
       '/v1/departments',
       '/v1/departments/{id}',
       '/v1/senders:merge',
       '/v1/tickets',
+      '/v1/tickets/{id}/category',
       '/v1/tickets/{id}/override',
+      '/v1/tickets/{id}/priority',
       '/v1/tickets:classify',
       '/v1/tickets:override-feedback',
     ]);

@@ -243,3 +243,75 @@ describe('sender email over HTTP', () => {
     expect(text).not.toContain('@example.com');
   }, 30_000);
 });
+
+describe('category and priority routes', () => {
+  beforeAll(startAgent, 30_000);
+  afterAll(stopAgent);
+
+  const call = (path: string, init: RequestInit = {}) =>
+    createApiApp({ agent: link, apiKey: API_KEY, log: () => undefined }).request(path, {
+      ...init,
+      headers: { 'x-api-key': API_KEY, 'content-type': 'application/json' },
+    });
+  const post = (path: string, body: unknown) => call(path, { method: 'POST', body: JSON.stringify(body) });
+
+  it('creates, lists, edits, and deletes categories; the id is fixed and a stored category cannot be deleted', async () => {
+    expect((await createApiApp({ agent: link, apiKey: API_KEY }).request('/v1/categories')).status).toBe(401);
+    expect((await post('/v1/categories', { id: 'outage', name: 'Outage', description: '' })).status).toBe(400);
+    const created = await post('/v1/categories', { id: 'outage', name: 'Outage', description: 'Down', defaultPriority: 'urgent' });
+    expect(created.status).toBe(200);
+    expect(await created.json()).toEqual({
+      id: 'outage',
+      name: 'Outage',
+      description: 'Down',
+      active: true,
+      defaultPriority: 'urgent',
+      examples: [],
+    });
+    expect((await post('/v1/categories', { id: 'outage', name: 'Again', description: '', defaultPriority: 'low' })).status).toBe(409);
+    const patched = await call('/v1/categories/outage', { method: 'PATCH', body: JSON.stringify({ examples: ['Site down'] }) });
+    expect(((await patched.json()) as { examples: string[] }).examples).toEqual(['Site down']);
+    expect((await call('/v1/categories/outage', { method: 'PATCH', body: JSON.stringify({ id: 'x' }) })).status).toBe(400);
+    expect((await call('/v1/categories/nope', { method: 'PATCH', body: JSON.stringify({ active: false }) })).status).toBe(404);
+
+    await post('/v1/categories', { id: 'how-to', name: 'How-to', description: '', defaultPriority: 'low' });
+    const listed = (await (await call('/v1/categories')).json()) as { id: string }[];
+    expect(listed.map((c) => c.id)).toEqual(['how-to', 'outage']);
+
+    // No model is reachable here: the decision is failed, with no category and no priority.
+    const classified = await post('/v1/tickets:classify', { externalId: 'cat-1', subject: 'Site down', body: 'x', channel: 'web' });
+    const ticket = (await classified.json()) as { id: string; decision: Record<string, unknown> };
+    expect(ticket.decision).toMatchObject({ status: 'failed', categoryId: null, priority: null, priorityReviewed: false });
+
+    const categorized = await post(`/v1/tickets/${ticket.id}/category`, { categoryId: 'outage' });
+    expect(categorized.status).toBe(200);
+    expect(((await categorized.json()) as { decision: unknown }).decision).toMatchObject({
+      status: 'failed',
+      departmentId: null,
+      categoryId: 'outage',
+      replacedCategoryId: null,
+      categoryReviewed: true,
+      priority: null,
+    });
+    const prioritized = await post(`/v1/tickets/${ticket.id}/priority`, { priority: 'urgent' });
+    expect(((await prioritized.json()) as { decision: unknown }).decision).toMatchObject({
+      categoryId: 'outage',
+      priority: 'urgent',
+      replacedPriority: null,
+      priorityReviewed: true,
+    });
+    expect((await post(`/v1/tickets/${ticket.id}/priority`, { priority: 'critical' })).status).toBe(400);
+    expect((await post(`/v1/tickets/${ticket.id}/category`, { categoryId: 'unknown' })).status).toBe(400);
+    expect((await post('/v1/tickets/00000000-0000-4000-8000-00000000dead/priority', { priority: 'low' })).status).toBe(404);
+
+    await call('/v1/categories/how-to', { method: 'PATCH', body: JSON.stringify({ active: false }) });
+    const inactive = await post(`/v1/tickets/${ticket.id}/category`, { categoryId: 'how-to' });
+    expect(inactive.status).toBe(400);
+    expect(((await inactive.json()) as { error: { message: string } }).error.message).toMatch(/not active/);
+
+    const refused = await call('/v1/categories/outage', { method: 'DELETE' });
+    expect(refused.status).toBe(409);
+    expect((await call('/v1/categories/how-to', { method: 'DELETE' })).status).toBe(200);
+    expect((await call('/v1/categories/how-to', { method: 'DELETE' })).status).toBe(404);
+  }, 60_000);
+});

@@ -10,6 +10,13 @@ import {
   type ModelList,
   type OverrideTicket,
   type OverrideFeedback,
+  type Category,
+  type CreateCategory,
+  type DeleteCategory,
+  type DeleteCategoryResult,
+  type SetTicketCategory,
+  type SetTicketPriority,
+  type UpdateCategory,
   type SettingsPatch,
   type SettingsView,
   type StorageInfo,
@@ -67,6 +74,12 @@ export interface AgentCalls {
   listTickets(): readonly TicketView[] | Promise<readonly TicketView[]>;
   override(input: OverrideTicket): TicketView | Promise<TicketView>;
   overrideFeedback(): OverrideFeedback | Promise<OverrideFeedback>;
+  listCategories(): readonly Category[] | Promise<readonly Category[]>;
+  createCategory(input: CreateCategory): Category | Promise<Category>;
+  updateCategory(input: UpdateCategory): Category | Promise<Category>;
+  deleteCategory(input: DeleteCategory): DeleteCategoryResult | Promise<DeleteCategoryResult>;
+  setCategory(input: SetTicketCategory): TicketView | Promise<TicketView>;
+  setPriority(input: SetTicketPriority): TicketView | Promise<TicketView>;
   modelHealth(): Promise<ModelHealth>;
   getSettings(): SettingsView | Promise<SettingsView>;
   updateSettings(patch: SettingsPatch): SettingsView | Promise<SettingsView>;
@@ -283,6 +296,18 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
             return reply(request.id, request.method, await requireCalls().override(request.params));
           case 'departments.update':
             return reply(request.id, request.method, await requireCalls().updateDepartment(request.params));
+          case 'categories.list':
+            return reply(request.id, request.method, await requireCalls().listCategories());
+          case 'categories.create':
+            return reply(request.id, request.method, await requireCalls().createCategory(request.params));
+          case 'categories.update':
+            return reply(request.id, request.method, await requireCalls().updateCategory(request.params));
+          case 'categories.delete':
+            return reply(request.id, request.method, await requireCalls().deleteCategory(request.params));
+          case 'tickets.setCategory':
+            return reply(request.id, request.method, await requireCalls().setCategory(request.params));
+          case 'tickets.setPriority':
+            return reply(request.id, request.method, await requireCalls().setPriority(request.params));
           case 'tickets.overrideFeedback':
             return reply(request.id, request.method, await requireCalls().overrideFeedback());
           case 'tickets.context':

@@ -25,6 +25,13 @@ import {
   TicketViewSchema,
   TokenStateSchema,
   UpdateDepartmentSchema,
+  CategorySchema,
+  CreateCategorySchema,
+  DeleteCategoryResultSchema,
+  DeleteCategorySchema,
+  SetTicketCategorySchema,
+  SetTicketPrioritySchema,
+  UpdateCategorySchema,
   type DesktopSettingsView,
   type TokenState,
 } from '@ticket/shared';
@@ -91,6 +98,14 @@ export function createIpcHandlers(deps: IpcDeps): Record<Channel, IpcHandler> {
       DeleteDepartmentResultSchema.parse(
         await agent.request('departments.delete', input(DeleteDepartmentSchema, raw)),
       ),
+    [IpcChannels.listCategories]: async () =>
+      CategorySchema.array().parse(await agent.request('categories.list', {})),
+    [IpcChannels.createCategory]: async (raw) =>
+      CategorySchema.parse(await agent.request('categories.create', input(CreateCategorySchema, raw))),
+    [IpcChannels.updateCategory]: async (raw) =>
+      CategorySchema.parse(await agent.request('categories.update', input(UpdateCategorySchema, raw))),
+    [IpcChannels.deleteCategory]: async (raw) =>
+      DeleteCategoryResultSchema.parse(await agent.request('categories.delete', input(DeleteCategorySchema, raw))),
     [IpcChannels.classifyTicket]: async (raw) => {
       const ticket = input(ClassifyTicketSchema, raw);
       if (submits.has(ticket.externalId)) throw new IpcInputError('This ticket is already being classified.');
@@ -122,6 +137,10 @@ export function createIpcHandlers(deps: IpcDeps): Record<Channel, IpcHandler> {
       TicketViewSchema.array().parse(await agent.request('tickets.list', {})),
     [IpcChannels.overrideTicket]: async (raw) =>
       TicketViewSchema.parse(await agent.request('tickets.override', input(OverrideTicketSchema, raw))),
+    [IpcChannels.setTicketCategory]: async (raw) =>
+      TicketViewSchema.parse(await agent.request('tickets.setCategory', input(SetTicketCategorySchema, raw))),
+    [IpcChannels.setTicketPriority]: async (raw) =>
+      TicketViewSchema.parse(await agent.request('tickets.setPriority', input(SetTicketPrioritySchema, raw))),
 
     [IpcChannels.getSettings]: () => settingsView(),
     [IpcChannels.updateSettings]: async (raw) =>

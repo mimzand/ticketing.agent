@@ -19,6 +19,11 @@ import {
   TicketContextSchema,
   TicketViewSchema,
   TokenStateSchema,
+  CategorySchema,
+  CreateCategorySchema,
+  DeleteCategoryResultSchema,
+  SetTicketCategorySchema,
+  SetTicketPrioritySchema,
   type RendererApi,
 } from '@ticket/shared';
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
@@ -54,6 +59,12 @@ const api: RendererApi = {
   getTaxonomy: async () => TaxonomyStateSchema.parse(await ipcRenderer.invoke(IpcChannels.getTaxonomy)),
   deleteDepartment: async (input) =>
     DeleteDepartmentResultSchema.parse(await ipcRenderer.invoke(IpcChannels.deleteDepartment, input)),
+  listCategories: async () => CategorySchema.array().parse(await ipcRenderer.invoke(IpcChannels.listCategories)),
+  createCategory: async (input) =>
+    CategorySchema.parse(await ipcRenderer.invoke(IpcChannels.createCategory, CreateCategorySchema.parse(input))),
+  updateCategory: async (input) => CategorySchema.parse(await ipcRenderer.invoke(IpcChannels.updateCategory, input)),
+  deleteCategory: async (input) =>
+    DeleteCategoryResultSchema.parse(await ipcRenderer.invoke(IpcChannels.deleteCategory, input)),
   classifyTicket: async (input) =>
     TicketViewSchema.parse(
       await ipcRenderer.invoke(IpcChannels.classifyTicket, ClassifyTicketSchema.parse(input)),
@@ -64,6 +75,14 @@ const api: RendererApi = {
   overrideTicket: async (input) =>
     TicketViewSchema.parse(
       await ipcRenderer.invoke(IpcChannels.overrideTicket, OverrideTicketSchema.parse(input)),
+    ),
+  setTicketCategory: async (input) =>
+    TicketViewSchema.parse(
+      await ipcRenderer.invoke(IpcChannels.setTicketCategory, SetTicketCategorySchema.parse(input)),
+    ),
+  setTicketPriority: async (input) =>
+    TicketViewSchema.parse(
+      await ipcRenderer.invoke(IpcChannels.setTicketPriority, SetTicketPrioritySchema.parse(input)),
     ),
   ticketContext: async (id) => TicketContextSchema.parse(await ipcRenderer.invoke(IpcChannels.ticketContext, id)),
   mergeSender: async (input) =>

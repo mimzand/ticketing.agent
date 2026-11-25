@@ -32,6 +32,15 @@ export interface EvalReport {
   readonly errors: number;
   readonly catalogues: readonly CatalogueInfo[];
   readonly failures: readonly CaseResult[];
+  /** Scored apart from the department, over cases that set the expectation. */
+  readonly category: FieldScore;
+  readonly priority: FieldScore;
+}
+
+export interface FieldScore {
+  /** Cases that set this expectation and produced a decision. */
+  readonly scored: number;
+  readonly matches: number;
 }
 
 const ratio = (part: number, whole: number) => (whole === 0 ? null : part / whole);
@@ -73,6 +82,10 @@ export function buildReport(runs: readonly SuiteRun[]): EvalReport {
     const of = results.filter((r) => r.source === name);
     return { total: of.length, passed: of.filter((r) => r.passed).length };
   };
+  const fieldScore = (field: 'categoryId' | 'priority'): FieldScore => {
+    const set = scored.filter(({ expected }) => expected[field] !== undefined);
+    return { scored: set.length, matches: set.filter(({ expected, actual }) => expected[field] === actual[field]).length };
+  };
   const labelMatches = scored.filter(({ expected, actual }) => expected.departmentId === actual.departmentId).length;
   const passed = results.filter((r) => r.passed).length;
 
@@ -89,6 +102,8 @@ export function buildReport(runs: readonly SuiteRun[]): EvalReport {
     errors: results.length - scored.length,
     catalogues: runs.flatMap((run) => run.catalogues),
     failures: results.filter((r) => !r.passed),
+    category: fieldScore('categoryId'),
+    priority: fieldScore('priority'),
   };
 }
 
@@ -113,6 +128,15 @@ export function formatReport(report: EvalReport): string {
         `${d.departmentId.padEnd(width)}  ${percent(d.precision).padStart(9)}  ${percent(d.recall).padStart(6)}  ` +
           `${d.truePositives}/${d.falsePositives}/${d.falseNegatives}`,
       );
+    }
+  }
+  // Category and priority are scored apart: they never change the department lines above.
+  for (const [label, score] of [
+    ['Category', report.category],
+    ['Priority', report.priority],
+  ] as const) {
+    if (score.scored > 0) {
+      lines.push(`${label}: ${percent(score.matches / score.scored)} (${score.matches}/${score.scored} cases that set it)`);
     }
   }
   for (const c of report.catalogues) {

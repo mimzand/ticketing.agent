@@ -47,9 +47,23 @@ const ticket = {
   channel: 'email',
   createdAt: '2026-01-01T00:00:00.000Z',
   email: 'ann@example.com',
-  decision: { departmentId: 'billing', confidence: 0.9, rationale: 'Invoice.', status: 'labeled', quote: null, taxonomyVersion: 1 },
+  decision: {
+    departmentId: 'billing',
+    confidence: 0.9,
+    rationale: 'Invoice.',
+    status: 'labeled',
+    quote: null,
+    taxonomyVersion: 1,
+    categoryId: 'outage',
+    replacedCategoryId: null,
+    categoryReviewed: false,
+    priority: 'high',
+    replacedPriority: null,
+    priorityReviewed: false,
+  },
 };
 const department = { id: 'billing', name: 'Billing', description: '', active: true, aliases: [], examples: [] };
+const category = { id: 'outage', name: 'Outage', description: '', active: true, defaultPriority: 'urgent', examples: [] };
 
 /** A fake agent that holds the token like the real one: in memory, never returned. */
 function fakeAgent() {
@@ -70,6 +84,12 @@ function fakeAgent() {
     'tickets.classify': () => ticket,
     'tickets.list': () => [ticket],
     'tickets.override': () => ticket,
+    'tickets.setCategory': () => ticket,
+    'tickets.setPriority': () => ticket,
+    'categories.list': () => [category],
+    'categories.create': () => category,
+    'categories.update': () => category,
+    'categories.delete': () => ({ id: 'outage', deleted: true }),
     'settings.get': () => settingsView(agentToken !== null),
     'settings.update': () => settingsView(agentToken !== null),
     'settings.setToken': (params) => {
@@ -99,6 +119,11 @@ const INPUTS: Record<string, unknown> = {
   [IpcChannels.deleteDepartment]: { id: 'billing' },
   [IpcChannels.classifyTicket]: { externalId: 'ext-1', subject: 'Invoice', body: 'Body', channel: 'email' },
   [IpcChannels.overrideTicket]: { id: TICKET_ID, departmentId: 'billing' },
+  [IpcChannels.setTicketCategory]: { id: TICKET_ID, categoryId: 'outage' },
+  [IpcChannels.setTicketPriority]: { id: TICKET_ID, priority: 'urgent' },
+  [IpcChannels.createCategory]: { id: 'outage', name: 'Outage', description: '', defaultPriority: 'urgent' },
+  [IpcChannels.updateCategory]: { id: 'outage', active: false },
+  [IpcChannels.deleteCategory]: { id: 'outage' },
   [IpcChannels.cancelClassify]: { externalId: 'ext-1' },
   [IpcChannels.ticketContext]: TICKET_ID,
   [IpcChannels.mergeSender]: { from: 'ann.old@example.com', into: 'ann@example.com' },
@@ -186,5 +211,18 @@ describe('IPC handlers', () => {
     await expect(handlers[IpcChannels.updateDepartment]({ id: 'billing', newId: 'x' })).rejects.toThrow();
     await handlers[IpcChannels.updateDepartment]({ id: 'billing', active: false });
     expect(requests.at(-1)).toEqual({ method: 'departments.update', params: { id: 'billing', active: false } });
+  });
+
+  it('validates category and priority input before the agent sees it', async () => {
+    const { agent, requests } = fakeAgent();
+    const tokens = createTokenStore({ safeStorage: fakeSafeStorage(), filePath: join(dir, 't.bin'), platform: 'win32' });
+    const handlers = createIpcHandlers({ agent, tokens });
+    await expect(handlers[IpcChannels.setTicketPriority]({ id: TICKET_ID, priority: 'critical' })).rejects.toThrow();
+    await expect(handlers[IpcChannels.setTicketCategory]({ id: TICKET_ID, categoryId: 'Not An Id' })).rejects.toThrow();
+    await expect(handlers[IpcChannels.createCategory]({ id: 'outage', name: 'Outage', description: '' })).rejects.toThrow();
+    await expect(handlers[IpcChannels.updateCategory]({ id: 'outage', newId: 'x' })).rejects.toThrow();
+    expect(requests.filter((r) => r.method.startsWith('categories.') || r.method.startsWith('tickets.set'))).toEqual([]);
+    await handlers[IpcChannels.setTicketPriority]({ id: TICKET_ID, priority: 'low' });
+    expect(requests.at(-1)).toEqual({ method: 'tickets.setPriority', params: { id: TICKET_ID, priority: 'low' } });
   });
 });

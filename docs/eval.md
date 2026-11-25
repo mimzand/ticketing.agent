@@ -59,6 +59,8 @@ Append an object to `cases` in `golden/golden.json` (or start a new file in `gol
   - `scripted` sends `output` as JSON. It may break the schema on purpose.
   - `recorded` sends `content` exactly as a real model returned it, with optional `model` and `recordedAt`. To measure a model, replace scripted replies with recorded ones; the rest of the case stays the same.
   - `error` answers an HTTP status, so the decision is `failed`.
+- `expect.categoryId` and `expect.priority` (optional, nullable) check the stored category and priority. They are scored on their own report lines, only for cases that set them, and never change the department precision and recall. `expect.systemIncludes` / `systemExcludes` (optional) check text in the system instruction of the case's classify, such as a category trend line.
+- A file may add `categories` (per catalogue name: `id`, `name`, `description`, `defaultPriority`, optional `active` and `examples`), and a case may add `earlier`: tickets from any sender classified first, each with an optional admin `category` and `priority`, to build the admin priority record.
 - `expect.status` is `labeled`, `needs_review`, or `failed`. `departmentId` is set exactly when the status is `labeled`, and it must be active in the catalogue. Classify never yields `overridden`.
 - `history` (optional): up to 5 earlier tickets from the same sender. Each has `ticket`, `reply`, and an optional `override` department id. They are classified (and overridden) first, so the case ticket sees them as sender memory. History tickets and the case ticket all need the same `email`.
 - `wrongReply` (optional): a counter-check. With this reply instead, the expectation must *not* hold. Otherwise the case fails, because it could not catch that answer.

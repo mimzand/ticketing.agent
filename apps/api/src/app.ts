@@ -11,6 +11,12 @@ import {
   listTickets,
   mergeSenders,
   overrideFeedback,
+  createCategory,
+  deleteCategory,
+  listCategories,
+  setTicketCategory,
+  setTicketPriority,
+  updateCategory,
   overrideTicket,
   updateDepartment,
 } from './routes.js';
@@ -103,6 +109,22 @@ export function createApiApp(deps: ApiDeps): Hono {
     const result = await deleteDepartment(deps.agent, c.req.param('id'));
     return c.json(result.body, result.status);
   });
+  app.get('/v1/categories', async (c) => {
+    const result = await listCategories(deps.agent);
+    return c.json(result.body, result.status);
+  });
+  app.post('/v1/categories', async (c) => {
+    const result = await createCategory(c, deps.agent);
+    return c.json(result.body, result.status);
+  });
+  app.patch('/v1/categories/:id', async (c) => {
+    const result = await updateCategory(c, deps.agent, c.req.param('id'));
+    return c.json(result.body, result.status);
+  });
+  app.delete('/v1/categories/:id', async (c) => {
+    const result = await deleteCategory(deps.agent, c.req.param('id'));
+    return c.json(result.body, result.status);
+  });
   app.post('/v1/tickets:classify', async (c) => {
     const result = await classifyTicket(c, deps.agent);
     return c.json(result.body, result.status);
@@ -121,6 +143,15 @@ export function createApiApp(deps: ApiDeps): Hono {
   });
   app.post('/v1/tickets/:id/override', async (c) => {
     const result = await overrideTicket(c, deps.agent, c.req.param('id'));
+    return c.json(result.body, result.status);
+  });
+
+  app.post('/v1/tickets/:id/category', async (c) => {
+    const result = await setTicketCategory(c, deps.agent, c.req.param('id'));
+    return c.json(result.body, result.status);
+  });
+  app.post('/v1/tickets/:id/priority', async (c) => {
+    const result = await setTicketPriority(c, deps.agent, c.req.param('id'));
     return c.json(result.body, result.status);
   });
 

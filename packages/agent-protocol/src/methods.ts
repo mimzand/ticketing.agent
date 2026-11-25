@@ -22,6 +22,13 @@ import {
   ModelHealthSchema,
   OverrideTicketSchema,
   OverrideFeedbackSchema,
+  CategorySchema,
+  CreateCategorySchema,
+  DeleteCategoryResultSchema,
+  DeleteCategorySchema,
+  SetTicketCategorySchema,
+  SetTicketPrioritySchema,
+  UpdateCategorySchema,
   TicketViewSchema,
   err,
   ok,
@@ -58,6 +65,14 @@ export const PROTOCOL_METHODS = {
   'tickets.classify': { params: ClassifyTicketSchema, result: TicketViewSchema },
   'tickets.list': { params: NoParamsSchema, result: z.array(TicketViewSchema) },
   'tickets.override': { params: OverrideTicketSchema, result: TicketViewSchema },
+  'categories.list': { params: NoParamsSchema, result: z.array(CategorySchema) },
+  'categories.create': { params: CreateCategorySchema, result: CategorySchema },
+  'categories.update': { params: UpdateCategorySchema, result: CategorySchema },
+  'categories.delete': { params: DeleteCategorySchema, result: DeleteCategoryResultSchema },
+  /** Admin category: an active category only. Department fields and priority do not change. */
+  'tickets.setCategory': { params: SetTicketCategorySchema, result: TicketViewSchema },
+  /** Admin priority review. Department fields and category do not change. */
+  'tickets.setPriority': { params: SetTicketPrioritySchema, result: TicketViewSchema },
   'tickets.context': { params: TicketContextRequestSchema, result: TicketContextSchema },
   /** Read only: overrides that replaced a classifier department, and the catalogue. No email. */
   'tickets.overrideFeedback': { params: NoParamsSchema, result: OverrideFeedbackSchema },

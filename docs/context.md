@@ -108,6 +108,12 @@ The first message on a connection is `system.hello` (protocol name, version, tok
 | `tickets.context` | a ticket's sender email (or null), that sender's earlier decided tickets, and their numeric summary |
 | `senders.merge` | operator merge: every ticket of `from` moves onto `into`; decisions are not changed |
 | `tickets.override` | an active department only; status becomes `overridden` |
+| `categories.list` | every problem category, inactive ones included |
+| `categories.create` | `id`, `name`, `description`, required `defaultPriority`, optional `examples`; no taxonomy version |
+| `categories.update` | name, description, active, defaultPriority, examples; the id never changes |
+| `categories.delete` | refused while a decision stores the id as `categoryId` or `replacedCategoryId` |
+| `tickets.setCategory` | admin: an active category only; department fields and priority do not change |
+| `tickets.setPriority` | admin: `low`, `normal`, `high`, or `urgent`; department fields and category do not change |
 | `tickets.overrideFeedback` | read only: decided tickets whose first override replaced a classifier department (`replacedDepartmentId` and the operator `departmentId`, ticket text, confidence, rationale, quote, taxonomy version), newest first, at most 500, with the current catalogue. No email. Changes nothing |
 
 Every request and response is validated with Zod. Ticket text is untrusted data in the user message, not in the system instruction.
@@ -132,6 +138,12 @@ After the `externalId` short-circuit, the host loads at most the 5 most recent d
 
 `decisions.replaced_department_id` (migration `0004_replaced_department`) records that correction. Classify stores null and older rows stay null. The first override of a decision that is not already `overridden` copies the department on the row at that moment (null when the classifier applied none); later overrides change only the department, and a classifier save never writes the column. Confidence, rationale, quote, and taxonomy version stay as they were on override. The column is not part of `Decision` or `TicketView`; it reaches only the prior-ticket rows and `tickets.context`, which returns the same `summary` beside `prior` (the empty summary when the sender is unknown or has no earlier tickets).
 
+Problem categories and priority. A category is the kind of problem, separate from the handling department; one ticket has both. An admin defines categories (`categories` table, migration `0005_priority_category`): id (same rule as a department id, never changes), name, description, active, a required `defaultPriority`, and optional examples with the department example limits. Categories do not change the department taxonomy version. An inactive category stays listed and cannot be assigned by the model or an admin. The model also returns `categoryId` and `priority` (both optional in the output schema). Independently of the department rules, the host keeps `categoryId` only when it is an active category id and `priority` only when it is exactly `low`, `normal`, `high`, or `urgent`; anything else is stored as null, never coerced, and never filled from the category's default priority. A null category or priority does not force `needs_review` and does not drop a valid department. Both are stored on the decision (`category_id`, `priority`), never on the ticket and never in sender history.
+
+`tickets.setCategory` and `tickets.setPriority` are the admin corrections. The first category write copies the stored category into `replacedCategoryId` (null when the model stored none) and sets `categoryReviewed`; later writes change only `categoryId`. The first priority write copies the stored priority into `replacedPriority` and sets `priorityReviewed`, even when the admin confirms the same value; later writes change only `priority`. Neither changes the department status, `departmentId`, `replacedDepartmentId`, confidence, quote, or taxonomy version, and `tickets.override` stays department-only.
+
+On each classify the host loads counts of every decision grouped by final category, final priority, `replacedPriority`, and the review flag, and `priorityTrends` in `@ticket/shared` turns them into trend lines. Only rows whose priority an admin reviewed and that have a final category and priority count, so the model cannot confirm itself. A category with at least `PRIORITY_TREND_MIN` (5) reviewed tickets gets one line: `{id}: {n} reviewed; admin result {modal} {modalCount}/{n}. Of those {modalCount}, the model had said {replaced} on {m}.` (ties: urgent, high, normal, low; a null model priority is "none"). The active categories (JSON-quoted operator text, default priority, examples) and these lines go in the system instruction; `@ticket/adk-runtime` only renders them. Ticket text never enters the instruction, and nothing is copied into category examples automatically. Sender history and its summary carry no category or priority.
+
 The host rules are unchanged: a department or a quote that appears in the history, the summary, or `replacedDepartment` counts for nothing; only an active id at or above the threshold is applied, and only a quote found in the new ticket is kept. A repeated `externalId` returns the stored decision without a model call; if the stored ticket had no email and the repeat brings one, the email is attached and nothing is classified again. The email address is never logged.
 
 Model: company Ollama only (`OLLAMA_HOST`, `OLLAMA_MODEL`). Construct `new OllamaLlm(...)` from `@ticket/adk-runtime`, backed by `@ticket/model-provider`. No Gemini model name, no OpenAI, no cloud LLM, no web search.
@@ -153,6 +165,9 @@ Hono on `127.0.0.1:8787` (`API_HOST`, `API_PORT`). Each route forwards to the me
 | `GET` | `/v1/tickets` | API key |
 | `POST` | `/v1/tickets/{id}/override` | API key |
 | `POST` | `/v1/senders:merge` | API key |
+| `GET` `POST` | `/v1/categories` | API key |
+| `PATCH` `DELETE` | `/v1/categories/{id}` | API key |
+| `POST` | `/v1/tickets/{id}/category`, `/v1/tickets/{id}/priority` | API key |
 | `GET` | `/v1/tickets:override-feedback` | API key |
 
 `X-API-Key` or `Authorization: Bearer`, compared in constant time on a digest, as in `apps/api/src/security.ts`. On loopback, generate a key for the API process when `API_KEY` is unset and print it once. Responses never include the agent token or the Ollama token.

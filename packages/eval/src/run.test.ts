@@ -96,4 +96,52 @@ describe('runSuite through createAgentHost', () => {
     );
     expect(run.results[0]?.problems).toEqual(['the model was called 1 time(s) fewer than scripted']);
   });
+
+  it('scores category, priority, and instruction text only when the case sets them', async () => {
+    const file = parseSuiteFile('t.json', {
+      formatVersion: 1,
+      suite: 't',
+      catalogues: { main: [{ id: 'billing', name: 'Billing', description: 'Invoices' }] },
+      categories: { main: [{ id: 'billing-error', name: 'Billing error', description: '', defaultPriority: 'normal' }] },
+      cases: [
+        {
+          id: 'wrong-priority',
+          source: 'golden',
+          catalogue: 'main',
+          ticket,
+          reply: { kind: 'scripted', output: { ...billing.output, categoryId: 'billing-error', priority: 'low' } },
+          expect: {
+            status: 'labeled',
+            departmentId: 'billing',
+            categoryId: 'billing-error',
+            priority: 'high',
+            systemIncludes: ['- id: billing-error', 'not in the instruction'],
+            systemExcludes: ['  default priority: normal'],
+          },
+        },
+        {
+          id: 'department-only',
+          source: 'golden',
+          catalogue: 'main',
+          ticket: { ...ticket, externalId: 'r-2' },
+          reply: { kind: 'scripted', output: { ...billing.output, priority: 'nonsense' } },
+          expect: { status: 'labeled', departmentId: 'billing' },
+        },
+      ],
+    });
+    const run = await runSuite(file);
+    expect(run.results[0]?.problems).toEqual([
+      'priority low, expected high',
+      'instruction is missing systemIncludes[1]',
+      'instruction contains systemExcludes[0]',
+    ]);
+    expect(run.results[0]?.actual).toMatchObject({ categoryId: 'billing-error', priority: 'low' });
+    expect(run.results[1]).toMatchObject({ passed: true, actual: { categoryId: null, priority: null } });
+    // The priority miss does not touch the department score.
+    const report = buildReport([run]);
+    expect(report.departments).toEqual([
+      { departmentId: 'billing', truePositives: 2, falsePositives: 0, falseNegatives: 0, precision: 1, recall: 1 },
+    ]);
+    expect(report.priority).toEqual({ scored: 1, matches: 0 });
+  });
 });
