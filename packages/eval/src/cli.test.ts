@@ -54,4 +54,25 @@ describe('eval CLI', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 30_000);
+
+  it('writes decision-feedback cases and category candidates from an export', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ticket-decision-feedback-cli-'));
+    try {
+      const result = cli(['decision-feedback', 'fixtures/decision-feedback.sample.json', '--out', dir]);
+      expect(result.status, result.stderr).toBe(0);
+      // The checked-in sample has 6 reviewed rows: 5 become cases (one inactive category is skipped)
+      // and 3 become category few-shot candidates.
+      expect(result.stdout).toContain('Reviewed decisions read: 6');
+      expect(result.stdout).toContain('Feedback cases: 5');
+      expect(result.stdout).toContain('Category few-shot candidates: 3');
+      expect(JSON.parse(readFileSync(join(dir, 'decision-feedback-cases.json'), 'utf8'))).toEqual(
+        JSON.parse(readFileSync(join(packageDir, 'golden', 'decision-feedback-sample.json'), 'utf8')),
+      );
+      expect(JSON.parse(readFileSync(join(dir, 'category-few-shot-candidates.json'), 'utf8'))).toEqual(
+        JSON.parse(readFileSync(join(packageDir, 'fixtures', 'category-few-shot-candidates.sample.json'), 'utf8')),
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

@@ -36,7 +36,21 @@ export const SETTINGS_CATEGORY_LABELS: Record<SettingsCategory, string> = {
 
 export const SETTINGS_CATEGORY_DESCRIPTIONS: Record<SettingsCategory, string> = {
   ollama: 'Server URL, connection timeout, test, and access token.',
-  models: 'Models on the server, the active model, and the classify timeout.',
+  models: 'Models on the server, the active model, the optional fallback model, and the classify timeout.',
   classification: 'Minimum confidence for applying a label.',
   storage: 'Database path and row counts (read only).',
 };
+
+/**
+ * The fallback model choices: the server's models (and the current value if the
+ * server no longer lists it), never the primary model. "Disabled" is null.
+ */
+export function fallbackModelOptions(serverModels: readonly string[], primary: string, current: string | null): string[] {
+  const names = serverModels.filter((name) => name !== primary);
+  return current !== null && current !== primary && !names.includes(current) ? [current, ...names] : names;
+}
+
+/** Why the fallback cannot be saved, or null. The host refuses the same pair too. */
+export function fallbackModelProblem(primary: string, fallback: string | null): string | null {
+  return fallback !== null && fallback === primary ? 'The fallback model must differ from the primary model.' : null;
+}

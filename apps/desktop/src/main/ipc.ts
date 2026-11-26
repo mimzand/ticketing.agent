@@ -32,6 +32,7 @@ import {
   SetTicketCategorySchema,
   SetTicketPrioritySchema,
   UpdateCategorySchema,
+  ReviewQueueSchema,
   type DesktopSettingsView,
   type TokenState,
 } from '@ticket/shared';
@@ -135,6 +136,7 @@ export function createIpcHandlers(deps: IpcDeps): Record<Channel, IpcHandler> {
     },
     [IpcChannels.listTickets]: async () =>
       TicketViewSchema.array().parse(await agent.request('tickets.list', {})),
+    [IpcChannels.reviewQueue]: async () => ReviewQueueSchema.parse(await agent.request('tickets.reviewQueue', {})),
     [IpcChannels.overrideTicket]: async (raw) =>
       TicketViewSchema.parse(await agent.request('tickets.override', input(OverrideTicketSchema, raw))),
     [IpcChannels.setTicketCategory]: async (raw) =>

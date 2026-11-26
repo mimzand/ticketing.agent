@@ -1,6 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createOllamaClient, loadOllamaConfig, parseOllamaBaseUrl } from './ollama.js';
+import { createOllamaClient, loadOllamaConfig, OllamaError, parseOllamaBaseUrl } from './ollama.js';
 
 let server: Server | undefined;
 
@@ -82,5 +82,43 @@ describe('createOllamaClient', () => {
     });
     const client = createOllamaClient(loadOllamaConfig({ OLLAMA_HOST: baseUrl, OLLAMA_MODEL: 'test' }));
     await expect(client.generate({ system: 'rules', user: 'ticket' })).resolves.toBe('{"ok":true}');
+  });
+
+  const respond = (status: number, body: string | null) =>
+    (async () => new Response(body, { status, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+  const config = { baseUrl: 'http://127.0.0.1:1', model: 'm', token: undefined, timeoutMs: 1_000 };
+
+  it.each([
+    ['HTTP 503 with its status', respond(503, '{}'), { code: 'http', status: 503 }],
+    ['HTTP 400 with its status', respond(400, '{}'), { code: 'http', status: 400 }],
+    ['a body that is not JSON', respond(200, 'not json'), { code: 'invalid-response', status: null }],
+    ['no assistant message', respond(200, '{"message":{}}'), { code: 'invalid-response' }],
+    ['an empty assistant message', respond(200, '{"message":{"role":"assistant","content":"  "}}'), { code: 'empty-response' }],
+    [
+      'a network failure',
+      (async () => {
+        throw new TypeError('fetch failed');
+      }) as typeof fetch,
+      { code: 'network' },
+    ],
+  ])('types %s', async (_name, fetchImpl, expected) => {
+    const error = await createOllamaClient(config, fetchImpl)
+      .generate({ system: 's', user: 'u' })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(OllamaError);
+    expect(error).toMatchObject(expected);
+  });
+
+  it('types a timeout and an invalid URL', async () => {
+    const slow = (async (_url: unknown, init?: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason as Error));
+      })) as typeof fetch;
+    await expect(
+      createOllamaClient({ ...config, generateTimeoutMs: 20 }, slow).generate({ system: 's', user: 'u' }),
+    ).rejects.toMatchObject({ code: 'timeout' });
+    await expect(
+      createOllamaClient({ ...config, baseUrl: 'not a url' }, respond(200, '{}')).generate({ system: 's', user: 'u' }),
+    ).rejects.toMatchObject({ code: 'invalid-url' });
   });
 });

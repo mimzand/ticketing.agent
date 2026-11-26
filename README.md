@@ -34,6 +34,8 @@ Electron binary. `.yarnrc.yml` sets `nodeLinker: node-modules` and keeps lifecyc
 | `yarn test` | Vitest across all workspaces |
 | `yarn lint` | ESLint, including the package boundary rules |
 | `yarn eval` | Golden eval suite against a fake Ollama; exits non-zero on a regression. See [docs/eval.md](docs/eval.md) |
+| `yarn workspace @ticket/eval run decision-feedback <export.json>` | Category/priority feedback export → eval cases and category few-shot candidates (files only) |
+| `yarn workspace @ticket/eval run record <input.json> <output.json> --synthetic` | Records one live Ollama answer for a synthetic ticket into a draft suite file |
 
 The desktop alone is one command; it starts its own agent:
 
@@ -82,7 +84,9 @@ the app", "Attached", or "Reconnecting…" while a crashed agent is restarted).
   received), and **Merge into email…**, which asks for the other address and
   moves every ticket of this sender there without changing any decision. The detail panel also shows the
   **Evidence** quote under the rationale (an exact passage from the ticket, or "No quote")
-  and the **Taxonomy** version the classify used.
+  and the **Taxonomy** version the classify used. **Review queue** switches the list to the
+  tickets waiting for a person (`needs_review` and `failed`), oldest first, with the total and the
+  two counts; an override removes a ticket from it, a category or priority change does not.
 - **Departments**: every department, inactive ones included, with its aliases (as chips) and
   examples (a "N examples" toggle). Add (id, name, description, and optionally aliases and
   examples, one per line; new ones are active), **Edit** (name, description, active, aliases,
@@ -95,6 +99,9 @@ the app", "Attached", or "Reconnecting…" while a crashed agent is restarted).
   a required default priority and optional examples. The classifier picks one active category and a
   priority (low, normal, high, urgent); in the ticket detail an admin can set either. The ticket list
   shows the category and priority, and the model's value when an admin changed it.
+- **Settings** → AI Models also has an optional **Fallback model** (or Disabled; never the
+  active model; `OLLAMA_FALLBACK_MODEL` overrides it), tried once within the same classify
+  timeout after a retryable failure only.
 - **Settings**: the theme switch (dark by default, remembered in the renderer's localStorage)
   and four categories:
   - *Ollama Connection*: server URL, connection timeout, **Test connection** (tests the URL in

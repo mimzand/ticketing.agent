@@ -5,6 +5,9 @@ import { BaseLlm, type LlmRequest, type LlmResponse } from './adk.js';
 export class OllamaLlm extends BaseLlm {
   static override readonly supportedModels: (string | RegExp)[] = [];
 
+  /** The last request failure, kept typed so the caller can classify it (never logged). */
+  lastError: unknown = undefined;
+
   /**
    * `signal` is the caller's cancel: it reaches the Ollama HTTP request even if the
    * ADK runner does not pass its own abort signal down.
@@ -35,6 +38,7 @@ export class OllamaLlm extends BaseLlm {
       yield { content: { role: 'model', parts: [{ text }] }, turnComplete: true };
     } catch (error) {
       if (abortSignal?.aborted) return;
+      this.lastError = error;
       yield {
         errorCode: 'OLLAMA_ERROR',
         errorMessage: error instanceof Error ? error.message : 'The model request failed.',

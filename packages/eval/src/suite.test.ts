@@ -55,6 +55,21 @@ describe('suite files', () => {
     ['needs_review with a department', withCase({ expect: { status: 'needs_review', departmentId: 'billing' } }), /exactly when/],
     ['an inactive expected department', withCase({ expect: { status: 'labeled', departmentId: 'old' } }), /not active/],
     ['an override case without origin', withCase({ source: 'override' }), /origin/],
+    ['a feedback case without feedbackOrigin', withCase({ source: 'feedback' }), /feedbackOrigin is set exactly/],
+    [
+      'a golden case with feedbackOrigin',
+      withCase({
+        feedbackOrigin: {
+          ticketId: '00000000-0000-4000-8000-000000000001',
+          categoryReviewed: true,
+          modelCategoryId: null,
+          priorityReviewed: false,
+          modelPriority: null,
+          taxonomyVersion: 1,
+        },
+      }),
+      /feedbackOrigin is set exactly/,
+    ],
     [
       'history without the case email',
       withCase({

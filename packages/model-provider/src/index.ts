@@ -8,5 +8,6 @@ export {
   parseOllamaBaseUrl,
   type OllamaClient,
   type OllamaConfig,
+  type OllamaErrorCode,
   type OllamaModelInfo,
 } from './ollama.js';

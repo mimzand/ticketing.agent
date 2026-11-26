@@ -7,4 +7,6 @@ export {
   classifyTicketText,
   type CategoryContext,
   type ClassifyTextInput,
+  type ModelReply,
 } from './classify.js';
+export { ClassifierResponseError, type ClassifierErrorCode } from './errors.js';

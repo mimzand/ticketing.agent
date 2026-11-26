@@ -64,6 +64,8 @@ export interface FakeOllama {
   readonly url: string;
   /** `answer`: reply at once. `hang`: never reply (until the client gives up). */
   mode: 'answer' | 'hang';
+  /** The classifier output `/api/chat` answers with (JSON-encoded as the assistant message). */
+  reply: Record<string, unknown>;
   readonly chats: { headers: IncomingHttpHeaders; aborted: boolean; answered: boolean }[];
   close(): Promise<void>;
 }
@@ -73,6 +75,7 @@ export async function fakeOllama(): Promise<FakeOllama> {
   const state: FakeOllama = {
     url: '',
     mode: 'answer',
+    reply: { departmentId: 'billing', confidence: 0.9, rationale: 'Invoice.' },
     chats: [],
     close: () => new Promise<void>((r) => server.close(() => r())),
   };
@@ -92,7 +95,7 @@ export async function fakeOllama(): Promise<FakeOllama> {
       if (state.mode === 'hang') return;
       chat.answered = true;
       res.writeHead(200, { 'content-type': 'application/json' });
-      const content = JSON.stringify({ departmentId: 'billing', confidence: 0.9, rationale: 'Invoice.' });
+      const content = JSON.stringify(state.reply);
       res.end(JSON.stringify({ message: { role: 'assistant', content } }));
     });
   });

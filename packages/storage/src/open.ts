@@ -28,10 +28,15 @@ import {
   type PriorityAggregate,
   type TicketPriority,
   type UpdateCategory,
+  DecisionFeedbackItemSchema,
+  REVIEW_STATUSES,
+  ReviewQueueSchema,
+  type DecisionFeedbackItem,
+  type ReviewQueue,
 } from '@ticket/shared';
 import BetterSqlite3 from 'better-sqlite3';
 import { type z } from 'zod';
-import { and, count, desc, eq, isNotNull, lt, max, ne, or } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNotNull, lt, max, ne, or } from 'drizzle-orm';
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { existsSync, mkdirSync } from 'node:fs';
@@ -156,6 +161,16 @@ export interface TicketDatabase {
    * the email is never part of these rows.
    */
   overrideFeedback(limit: number): OverrideFeedbackItem[];
+  /**
+   * The human review queue: counts of every `needs_review` and `failed` decision,
+   * and the oldest `limit` of those tickets (createdAt, then id). Filtered in SQL.
+   */
+  reviewQueue(limit: number): ReviewQueue;
+  /**
+   * Decisions an admin reviewed for category or priority (by the review flags, so a
+   * confirmation and a null model value count), newest first, at most `limit`. No sender.
+   */
+  decisionFeedback(limit: number): DecisionFeedbackItem[];
   getById(id: string): TicketView | null;
   listRecent(): readonly TicketView[];
   close(): void;
@@ -717,6 +732,57 @@ export function openTicketDatabase(filePath: string): TicketDatabase {
         .limit(limit)
         .all()
         .map((row) => OverrideFeedbackItemSchema.parse(row));
+    },
+    reviewQueue(limit) {
+      const statuses = [...REVIEW_STATUSES];
+      const counts = db
+        .select({ status: decisions.status, n: count() })
+        .from(decisions)
+        .where(inArray(decisions.status, statuses))
+        .groupBy(decisions.status)
+        .all();
+      const rows = ticketQuery(db)
+        .where(inArray(decisions.status, statuses))
+        .orderBy(asc(tickets.createdAt), asc(tickets.id))
+        .limit(limit)
+        .all();
+      return ReviewQueueSchema.parse({
+        counts: {
+          needsReview: counts.find((c) => c.status === 'needs_review')?.n ?? 0,
+          failed: counts.find((c) => c.status === 'failed')?.n ?? 0,
+        },
+        tickets: rows.map((row) => toView(row)),
+      });
+    },
+    decisionFeedback(limit) {
+      return db
+        .select({
+          ticketId: tickets.id,
+          externalId: tickets.externalId,
+          subject: tickets.subject,
+          body: tickets.body,
+          channel: tickets.channel,
+          createdAt: tickets.createdAt,
+          status: decisions.status,
+          departmentId: decisions.departmentId,
+          categoryReviewed: decisions.categoryReviewed,
+          modelCategoryId: decisions.replacedCategoryId,
+          categoryId: decisions.categoryId,
+          priorityReviewed: decisions.priorityReviewed,
+          modelPriority: decisions.replacedPriority,
+          priority: decisions.priority,
+          confidence: decisions.confidence,
+          rationale: decisions.rationale,
+          quote: decisions.quote,
+          taxonomyVersion: decisions.taxonomyVersion,
+        })
+        .from(tickets)
+        .innerJoin(decisions, eq(decisions.ticketId, tickets.id))
+        .where(or(eq(decisions.categoryReviewed, true), eq(decisions.priorityReviewed, true)))
+        .orderBy(desc(tickets.createdAt), desc(tickets.id))
+        .limit(limit)
+        .all()
+        .map((row) => DecisionFeedbackItemSchema.parse(row));
     },
     getById(id) {
       const row = ticketQuery(db).where(eq(tickets.id, id)).get();

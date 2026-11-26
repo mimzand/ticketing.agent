@@ -16,6 +16,7 @@ type EnvOverride = { readonly ok: true; readonly value: unknown } | { readonly o
 const ENV_PARSERS: Record<keyof typeof SETTING_ENV_VARS, (raw: string) => EnvOverride> = {
   ollamaBaseUrl: (raw) => parseWith(OllamaBaseUrlSchema, raw),
   model: (raw) => parseWith(OllamaModelNameSchema, raw),
+  fallbackModel: (raw) => parseWith(OllamaModelNameSchema, raw),
   minConfidence: (raw) => {
     const value = Number(raw);
     if (!Number.isFinite(value)) return { ok: false, error: 'Use a number from 0 to 1.' };

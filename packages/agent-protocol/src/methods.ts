@@ -22,6 +22,8 @@ import {
   ModelHealthSchema,
   OverrideTicketSchema,
   OverrideFeedbackSchema,
+  DecisionFeedbackSchema,
+  ReviewQueueSchema,
   CategorySchema,
   CreateCategorySchema,
   DeleteCategoryResultSchema,
@@ -73,6 +75,10 @@ export const PROTOCOL_METHODS = {
   'tickets.setCategory': { params: SetTicketCategorySchema, result: TicketViewSchema },
   /** Admin priority review. Department fields and category do not change. */
   'tickets.setPriority': { params: SetTicketPrioritySchema, result: TicketViewSchema },
+  /** needs_review and failed tickets, oldest first, at most 200, with full counts. */
+  'tickets.reviewQueue': { params: NoParamsSchema, result: ReviewQueueSchema },
+  /** Read only: admin-reviewed category and priority decisions with the catalogues. No email. */
+  'tickets.decisionFeedback': { params: NoParamsSchema, result: DecisionFeedbackSchema },
   'tickets.context': { params: TicketContextRequestSchema, result: TicketContextSchema },
   /** Read only: overrides that replaced a classifier department, and the catalogue. No email. */
   'tickets.overrideFeedback': { params: NoParamsSchema, result: OverrideFeedbackSchema },

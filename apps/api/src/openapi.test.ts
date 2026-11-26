@@ -32,7 +32,9 @@ describe('OpenAPI', () => {
       '/v1/tickets/{id}/override',
       '/v1/tickets/{id}/priority',
       '/v1/tickets:classify',
+      '/v1/tickets:decision-feedback',
       '/v1/tickets:override-feedback',
+      '/v1/tickets:review-queue',
     ]);
     expect(doc.paths['/health']?.['get']?.security).toEqual([]);
     expect(doc.paths['/v1/tickets']?.['get']?.security).toEqual([{ apiKey: [] }, { bearer: [] }]);

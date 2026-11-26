@@ -1,0 +1,179 @@
+{
+  "taxonomyVersion": 3,
+  "departments": [
+    {
+      "id": "billing",
+      "name": "Billing",
+      "description": "Invoices, payments, refunds.",
+      "active": true,
+      "aliases": [],
+      "examples": []
+    },
+    {
+      "id": "it",
+      "name": "IT",
+      "description": "Laptops, accounts, web services.",
+      "active": true,
+      "aliases": [],
+      "examples": []
+    },
+    {
+      "id": "facilities",
+      "name": "Facilities",
+      "description": "Buildings.",
+      "active": false,
+      "aliases": [],
+      "examples": []
+    }
+  ],
+  "categories": [
+    {
+      "id": "outage",
+      "name": "Outage",
+      "description": "A service is down.",
+      "active": true,
+      "defaultPriority": "urgent",
+      "examples": [
+        "The website returns error 500"
+      ]
+    },
+    {
+      "id": "how-to",
+      "name": "How-to",
+      "description": "A usage question.",
+      "active": true,
+      "defaultPriority": "low",
+      "examples": []
+    },
+    {
+      "id": "furniture",
+      "name": "Furniture",
+      "description": "Office furniture.",
+      "active": false,
+      "defaultPriority": "low",
+      "examples": []
+    }
+  ],
+  "items": [
+    {
+      "ticketId": "00000000-0000-4000-8000-00000000c001",
+      "externalId": "sample-fb-1",
+      "subject": "Checkout returns error 500",
+      "body": "Customers cannot pay. Reach me at sam.sample@example.com.",
+      "channel": "email",
+      "createdAt": "2026-11-24T10:00:00.000Z",
+      "status": "labeled",
+      "departmentId": "it",
+      "categoryReviewed": true,
+      "modelCategoryId": null,
+      "categoryId": "outage",
+      "priorityReviewed": false,
+      "modelPriority": "high",
+      "priority": "high",
+      "confidence": 0.8,
+      "rationale": "Synthetic.",
+      "quote": null,
+      "taxonomyVersion": 3
+    },
+    {
+      "ticketId": "00000000-0000-4000-8000-00000000c002",
+      "externalId": "sample-fb-2",
+      "subject": "How do I export invoices?",
+      "body": "Where is the export button?",
+      "channel": "email",
+      "createdAt": "2026-11-24T09:00:00.000Z",
+      "status": "labeled",
+      "departmentId": "billing",
+      "categoryReviewed": false,
+      "modelCategoryId": "how-to",
+      "categoryId": "how-to",
+      "priorityReviewed": true,
+      "modelPriority": "normal",
+      "priority": "low",
+      "confidence": 0.8,
+      "rationale": "Synthetic.",
+      "quote": null,
+      "taxonomyVersion": 3
+    },
+    {
+      "ticketId": "00000000-0000-4000-8000-00000000c003",
+      "externalId": "sample-fb-3",
+      "subject": "VPN down for everyone",
+      "body": "Nobody can connect since 8:00.",
+      "channel": "email",
+      "createdAt": "2026-11-24T08:00:00.000Z",
+      "status": "labeled",
+      "departmentId": "it",
+      "categoryReviewed": true,
+      "modelCategoryId": "how-to",
+      "categoryId": "outage",
+      "priorityReviewed": true,
+      "modelPriority": "normal",
+      "priority": "urgent",
+      "confidence": 0.8,
+      "rationale": "Synthetic.",
+      "quote": null,
+      "taxonomyVersion": 3
+    },
+    {
+      "ticketId": "00000000-0000-4000-8000-00000000c004",
+      "externalId": "sample-fb-4",
+      "subject": "Website returns error 500",
+      "body": "Same as the example.",
+      "channel": "email",
+      "createdAt": "2026-11-24T07:00:00.000Z",
+      "status": "labeled",
+      "departmentId": "it",
+      "categoryReviewed": true,
+      "modelCategoryId": "outage",
+      "categoryId": "outage",
+      "priorityReviewed": true,
+      "modelPriority": "urgent",
+      "priority": "urgent",
+      "confidence": 0.8,
+      "rationale": "Synthetic.",
+      "quote": null,
+      "taxonomyVersion": 3
+    },
+    {
+      "ticketId": "00000000-0000-4000-8000-00000000c005",
+      "externalId": "sample-fb-5",
+      "subject": "Broken chair",
+      "body": "Desk 3.",
+      "channel": "email",
+      "createdAt": "2026-11-24T06:00:00.000Z",
+      "status": "labeled",
+      "departmentId": "facilities",
+      "categoryReviewed": true,
+      "modelCategoryId": "how-to",
+      "categoryId": "furniture",
+      "priorityReviewed": false,
+      "modelPriority": "low",
+      "priority": "low",
+      "confidence": 0.8,
+      "rationale": "Synthetic.",
+      "quote": null,
+      "taxonomyVersion": 3
+    },
+    {
+      "ticketId": "00000000-0000-4000-8000-00000000c006",
+      "externalId": "sample-fb-6",
+      "subject": "Lamp flickers",
+      "body": "Desk 9 lamp.",
+      "channel": "email",
+      "createdAt": "2026-11-24T05:00:00.000Z",
+      "status": "needs_review",
+      "departmentId": null,
+      "categoryReviewed": false,
+      "modelCategoryId": null,
+      "categoryId": null,
+      "priorityReviewed": true,
+      "modelPriority": null,
+      "priority": "low",
+      "confidence": 0.8,
+      "rationale": "Synthetic.",
+      "quote": null,
+      "taxonomyVersion": 3
+    }
+  ]
+}

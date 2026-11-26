@@ -383,3 +383,140 @@ describe('categories and priority', () => {
     ]);
   });
 });
+
+describe('review queue', () => {
+  const decision = (status: SaveDecisionInput['status'], departmentId: string | null = null): SaveDecisionInput => ({
+    departmentId,
+    confidence: 0.5,
+    rationale: 'r',
+    status,
+    quote: null,
+    taxonomyVersion: 1,
+  });
+  const pause = () => new Promise((resolve) => setTimeout(resolve, 3));
+
+  async function seed(database: TicketDatabase, externalId: string, value: SaveDecisionInput) {
+    const ticket = database.insertTicket({ externalId, subject: 's', body: 'b', channel: 'email', email: 'q@example.com' });
+    database.saveDecision(ticket.id, value);
+    await pause();
+    return ticket;
+  }
+
+  it('holds only needs_review and failed tickets, oldest first, and an override or a department label removes one', async () => {
+    const database = open();
+    const old = await seed(database, 'q-1', decision('failed'));
+    await seed(database, 'q-2', decision('labeled', 'billing'));
+    const middle = await seed(database, 'q-3', decision('needs_review'));
+    const newest = await seed(database, 'q-4', decision('needs_review'));
+    const queue = database.reviewQueue(200);
+    expect(queue.counts).toEqual({ needsReview: 2, failed: 1 });
+    expect(queue.tickets.map((t) => t.id)).toEqual([old.id, middle.id, newest.id]);
+
+    // Category and priority corrections do not resolve the department review.
+    database.setCategory(middle.id, 'outage');
+    database.setPriority(middle.id, 'high');
+    expect(database.reviewQueue(200).tickets.map((t) => t.id)).toEqual([old.id, middle.id, newest.id]);
+
+    database.overrideDecision(middle.id, 'billing');
+    const after = database.reviewQueue(200);
+    expect(after.counts).toEqual({ needsReview: 1, failed: 1 });
+    expect(after.tickets.map((t) => t.id)).toEqual([old.id, newest.id]);
+  });
+
+  it('counts every unresolved ticket beyond the result cap and breaks createdAt ties by id', () => {
+    const database = open();
+    for (let i = 0; i < 205; i += 1) {
+      const ticket = database.insertTicket({ externalId: `c-${i}`, subject: 's', body: 'b', channel: 'web' });
+      database.saveDecision(ticket.id, decision(i % 5 === 0 ? 'failed' : 'needs_review'));
+    }
+    const queue = database.reviewQueue(200);
+    expect(queue.counts).toEqual({ needsReview: 164, failed: 41 });
+    expect(queue.tickets).toHaveLength(200);
+    const keys = queue.tickets.map((t) => `${t.createdAt}|${t.id}`);
+    expect(keys).toEqual([...keys].sort());
+  });
+
+  it('is empty with zero counts', () => {
+    expect(open().reviewQueue(200)).toEqual({ counts: { needsReview: 0, failed: 0 }, tickets: [] });
+  });
+});
+
+describe('decision feedback', () => {
+  const labeled: SaveDecisionInput = {
+    departmentId: 'billing',
+    confidence: 0.9,
+    rationale: 'Invoice.',
+    status: 'labeled',
+    quote: 'Invoice 18',
+    taxonomyVersion: 2,
+  };
+  const pause = () => new Promise((resolve) => setTimeout(resolve, 3));
+
+  async function seed(database: TicketDatabase, externalId: string, value: SaveDecisionInput) {
+    const ticket = database.insertTicket({
+      externalId,
+      subject: 'Invoice 18',
+      body: 'Body text.',
+      channel: 'email',
+      email: 'private.sender@example.com',
+    });
+    database.saveDecision(ticket.id, value);
+    await pause();
+    return ticket;
+  }
+
+  it('exports category-only, priority-only, both, confirmations, and null model values, newest first, without email', async () => {
+    const database = open();
+    const untouched = await seed(database, 'f-0', { ...labeled, categoryId: 'outage', priority: 'low' });
+    const categoryOnly = await seed(database, 'f-1', { ...labeled, categoryId: null, priority: 'normal' });
+    database.setCategory(categoryOnly.id, 'outage');
+    const priorityOnly = await seed(database, 'f-2', { ...labeled, categoryId: 'outage', priority: null });
+    database.setPriority(priorityOnly.id, 'urgent');
+    const both = await seed(database, 'f-3', { ...labeled, categoryId: 'outage', priority: 'low' });
+    database.setCategory(both.id, 'how-to');
+    database.setPriority(both.id, 'high');
+    const confirmed = await seed(database, 'f-4', { ...labeled, categoryId: 'outage', priority: 'high' });
+    database.setCategory(confirmed.id, 'outage');
+    database.setPriority(confirmed.id, 'high');
+    // Department override alone is not category/priority feedback.
+    database.overrideDecision(untouched.id, 'it');
+
+    const items = database.decisionFeedback(500);
+    expect(items.map((i) => i.ticketId)).toEqual([confirmed.id, both.id, priorityOnly.id, categoryOnly.id]);
+    expect(items[3]).toEqual({
+      ticketId: categoryOnly.id,
+      externalId: 'f-1',
+      subject: 'Invoice 18',
+      body: 'Body text.',
+      channel: 'email',
+      createdAt: categoryOnly.createdAt,
+      status: 'labeled',
+      departmentId: 'billing',
+      categoryReviewed: true,
+      modelCategoryId: null,
+      categoryId: 'outage',
+      priorityReviewed: false,
+      modelPriority: null,
+      priority: 'normal',
+      confidence: 0.9,
+      rationale: 'Invoice.',
+      quote: 'Invoice 18',
+      taxonomyVersion: 2,
+    });
+    expect(items[2]).toMatchObject({ categoryReviewed: false, priorityReviewed: true, modelPriority: null, priority: 'urgent' });
+    expect(items[1]).toMatchObject({ modelCategoryId: 'outage', categoryId: 'how-to', modelPriority: 'low', priority: 'high' });
+    expect(items[0]).toMatchObject({ modelCategoryId: 'outage', categoryId: 'outage', modelPriority: 'high', priority: 'high' });
+    expect(JSON.stringify(items)).not.toContain('example.com');
+    expect(JSON.stringify(items)).not.toContain('"email":');
+  });
+
+  it('returns at most the limit', () => {
+    const database = open();
+    for (let i = 0; i < 12; i += 1) {
+      const ticket = database.insertTicket({ externalId: `l-${i}`, subject: 's', body: 'b', channel: 'web' });
+      database.saveDecision(ticket.id, labeled);
+      database.setPriority(ticket.id, 'low');
+    }
+    expect(database.decisionFeedback(10)).toHaveLength(10);
+  });
+});

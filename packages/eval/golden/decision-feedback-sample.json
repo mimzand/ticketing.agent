@@ -1,0 +1,301 @@
+{
+  "formatVersion": 1,
+  "suite": "decision-feedback",
+  "threshold": 0.7,
+  "catalogues": {
+    "export": [
+      {
+        "id": "billing",
+        "name": "Billing",
+        "description": "Invoices, payments, refunds.",
+        "active": true,
+        "aliases": [],
+        "examples": []
+      },
+      {
+        "id": "it",
+        "name": "IT",
+        "description": "Laptops, accounts, web services.",
+        "active": true,
+        "aliases": [],
+        "examples": []
+      },
+      {
+        "id": "facilities",
+        "name": "Facilities",
+        "description": "Buildings.",
+        "active": false,
+        "aliases": [],
+        "examples": []
+      }
+    ]
+  },
+  "categories": {
+    "export": [
+      {
+        "id": "outage",
+        "name": "Outage",
+        "description": "A service is down.",
+        "active": true,
+        "defaultPriority": "urgent",
+        "examples": [
+          "The website returns error 500"
+        ]
+      },
+      {
+        "id": "how-to",
+        "name": "How-to",
+        "description": "A usage question.",
+        "active": true,
+        "defaultPriority": "low",
+        "examples": []
+      },
+      {
+        "id": "furniture",
+        "name": "Furniture",
+        "description": "Office furniture.",
+        "active": false,
+        "defaultPriority": "low",
+        "examples": []
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "feedback-00000000-0000-4000-8000-00000000c001",
+      "source": "feedback",
+      "description": "An admin changed category none to outage.",
+      "catalogue": "export",
+      "history": [],
+      "ticket": {
+        "externalId": "sample-fb-1",
+        "subject": "Checkout returns error 500",
+        "body": "Customers cannot pay. Reach me at sam.sample@example.com.",
+        "channel": "email"
+      },
+      "reply": {
+        "kind": "scripted",
+        "output": {
+          "departmentId": "it",
+          "confidence": 0.95,
+          "rationale": "Placeholder for the admin-reviewed values; replace with a recorded reply.",
+          "quote": null,
+          "categoryId": "outage",
+          "priority": "high"
+        }
+      },
+      "wrongReply": {
+        "kind": "scripted",
+        "output": {
+          "departmentId": "it",
+          "confidence": 0.95,
+          "rationale": "Placeholder for the admin-reviewed values; replace with a recorded reply.",
+          "quote": null,
+          "categoryId": null,
+          "priority": "high"
+        }
+      },
+      "expect": {
+        "status": "labeled",
+        "departmentId": "it",
+        "confidence": "above",
+        "categoryId": "outage"
+      },
+      "feedbackOrigin": {
+        "ticketId": "00000000-0000-4000-8000-00000000c001",
+        "categoryReviewed": true,
+        "modelCategoryId": null,
+        "priorityReviewed": false,
+        "modelPriority": "high",
+        "taxonomyVersion": 3
+      }
+    },
+    {
+      "id": "feedback-00000000-0000-4000-8000-00000000c002",
+      "source": "feedback",
+      "description": "An admin changed priority normal to low.",
+      "catalogue": "export",
+      "history": [],
+      "ticket": {
+        "externalId": "sample-fb-2",
+        "subject": "How do I export invoices?",
+        "body": "Where is the export button?",
+        "channel": "email"
+      },
+      "reply": {
+        "kind": "scripted",
+        "output": {
+          "departmentId": "billing",
+          "confidence": 0.95,
+          "rationale": "Placeholder for the admin-reviewed values; replace with a recorded reply.",
+          "quote": null,
+          "categoryId": "how-to",
+          "priority": "low"
+        }
+      },
+      "wrongReply": {
+        "kind": "scripted",
+        "output": {
+          "departmentId": "billing",
+          "confidence": 0.95,
+          "rationale": "Placeholder for the admin-reviewed values; replace with a recorded reply.",
+          "quote": null,
+          "categoryId": "how-to",
+          "priority": "normal"
+        }
+      },
+      "expect": {
+        "status": "labeled",
+        "departmentId": "billing",
+        "confidence": "above",
+        "priority": "low"
+      },
+      "feedbackOrigin": {
+        "ticketId": "00000000-0000-4000-8000-00000000c002",
+        "categoryReviewed": false,
+        "modelCategoryId": "how-to",
+        "priorityReviewed": true,
+        "modelPriority": "normal",
+        "taxonomyVersion": 3
+      }
+    },
+    {
+      "id": "feedback-00000000-0000-4000-8000-00000000c003",
+      "source": "feedback",
+      "description": "An admin changed category how-to to outage. An admin changed priority normal to urgent.",
+      "catalogue": "export",
+      "history": [],
+      "ticket": {
+        "externalId": "sample-fb-3",
+        "subject": "VPN down for everyone",
+        "body": "Nobody can connect since 8:00.",
+        "channel": "email"
+      },
+      "reply": {
+        "kind": "scripted",
+        "output": {
+          "departmentId": "it",
+          "confidence": 0.95,
+          "rationale": "Placeholder for the admin-reviewed values; replace with a recorded reply.",
+          "quote": null,
+          "categoryId": "outage",
+          "priority": "urgent"
+        }
+      },
+      "wrongReply": {
+        "kind": "scripted",
+        "output": {
+          "departmentId": "it",
+          "confidence": 0.95,
+          "rationale": "Placeholder for the admin-reviewed values; replace with a recorded reply.",
+          "quote": null,
+          "categoryId": "how-to",
+          "priority": "normal"
+        }
+      },
+      "expect": {
+        "status": "labeled",
+        "departmentId": "it",
+        "confidence": "above",
+        "categoryId": "outage",
+        "priority": "urgent"
+      },
+      "feedbackOrigin": {
+        "ticketId": "00000000-0000-4000-8000-00000000c003",
+        "categoryReviewed": true,
+        "modelCategoryId": "how-to",
+        "priorityReviewed": true,
+        "modelPriority": "normal",
+        "taxonomyVersion": 3
+      }
+    },
+    {
+      "id": "feedback-00000000-0000-4000-8000-00000000c004",
+      "source": "feedback",
+      "description": "An admin confirmed category outage. An admin confirmed priority urgent.",
+      "catalogue": "export",
+      "history": [],
+      "ticket": {
+        "externalId": "sample-fb-4",
+        "subject": "Website returns error 500",
+        "body": "Same as the example.",
+        "channel": "email"
+      },
+      "reply": {
+        "kind": "scripted",
+        "output": {
+          "departmentId": "it",
+          "confidence": 0.95,
+          "rationale": "Placeholder for the admin-reviewed values; replace with a recorded reply.",
+          "quote": null,
+          "categoryId": "outage",
+          "priority": "urgent"
+        }
+      },
+      "expect": {
+        "status": "labeled",
+        "departmentId": "it",
+        "confidence": "above",
+        "categoryId": "outage",
+        "priority": "urgent"
+      },
+      "feedbackOrigin": {
+        "ticketId": "00000000-0000-4000-8000-00000000c004",
+        "categoryReviewed": true,
+        "modelCategoryId": "outage",
+        "priorityReviewed": true,
+        "modelPriority": "urgent",
+        "taxonomyVersion": 3
+      }
+    },
+    {
+      "id": "feedback-00000000-0000-4000-8000-00000000c006",
+      "source": "feedback",
+      "description": "An admin changed priority none to low.",
+      "catalogue": "export",
+      "history": [],
+      "ticket": {
+        "externalId": "sample-fb-6",
+        "subject": "Lamp flickers",
+        "body": "Desk 9 lamp.",
+        "channel": "email"
+      },
+      "reply": {
+        "kind": "scripted",
+        "output": {
+          "departmentId": "billing",
+          "confidence": 0.95,
+          "rationale": "Placeholder for the admin-reviewed values; replace with a recorded reply.",
+          "quote": null,
+          "categoryId": null,
+          "priority": "low"
+        }
+      },
+      "wrongReply": {
+        "kind": "scripted",
+        "output": {
+          "departmentId": "billing",
+          "confidence": 0.95,
+          "rationale": "Placeholder for the admin-reviewed values; replace with a recorded reply.",
+          "quote": null,
+          "categoryId": null,
+          "priority": null
+        }
+      },
+      "expect": {
+        "status": "labeled",
+        "departmentId": "billing",
+        "confidence": "above",
+        "priority": "low"
+      },
+      "feedbackOrigin": {
+        "ticketId": "00000000-0000-4000-8000-00000000c006",
+        "categoryReviewed": false,
+        "modelCategoryId": null,
+        "priorityReviewed": true,
+        "modelPriority": null,
+        "taxonomyVersion": 3
+      }
+    }
+  ]
+}

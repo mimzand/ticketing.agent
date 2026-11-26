@@ -10,6 +10,8 @@ import {
   type ModelList,
   type OverrideTicket,
   type OverrideFeedback,
+  type DecisionFeedback,
+  type ReviewQueue,
   type Category,
   type CreateCategory,
   type DeleteCategory,
@@ -74,6 +76,8 @@ export interface AgentCalls {
   listTickets(): readonly TicketView[] | Promise<readonly TicketView[]>;
   override(input: OverrideTicket): TicketView | Promise<TicketView>;
   overrideFeedback(): OverrideFeedback | Promise<OverrideFeedback>;
+  reviewQueue(): ReviewQueue | Promise<ReviewQueue>;
+  decisionFeedback(): DecisionFeedback | Promise<DecisionFeedback>;
   listCategories(): readonly Category[] | Promise<readonly Category[]>;
   createCategory(input: CreateCategory): Category | Promise<Category>;
   updateCategory(input: UpdateCategory): Category | Promise<Category>;
@@ -308,6 +312,10 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
             return reply(request.id, request.method, await requireCalls().setCategory(request.params));
           case 'tickets.setPriority':
             return reply(request.id, request.method, await requireCalls().setPriority(request.params));
+          case 'tickets.reviewQueue':
+            return reply(request.id, request.method, await requireCalls().reviewQueue());
+          case 'tickets.decisionFeedback':
+            return reply(request.id, request.method, await requireCalls().decisionFeedback());
           case 'tickets.overrideFeedback':
             return reply(request.id, request.method, await requireCalls().overrideFeedback());
           case 'tickets.context':

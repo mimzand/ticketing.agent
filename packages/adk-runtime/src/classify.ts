@@ -9,6 +9,7 @@ import {
 } from '@ticket/shared';
 import { type OllamaClient } from '@ticket/model-provider';
 import { z } from 'zod';
+import { ClassifierResponseError, classifierErrorFrom } from './errors.js';
 import { loadAdkRuntime } from './load.js';
 
 const OutputSchema = z.object({
@@ -124,6 +125,18 @@ export interface ClassifyTextInput {
   /** Active categories and the admin priority record. Rendered in the instruction only. */
   readonly categories?: CategoryContext;
   readonly signal?: AbortSignal;
+  /**
+   * Development and test hook: called once with the complete, non-partial assistant
+   * message as received, before it is parsed. Never logged; absent in the apps.
+   */
+  readonly onModelReply?: (reply: ModelReply) => void;
+}
+
+/** A raw model answer, for recording synthetic eval cases. */
+export interface ModelReply {
+  readonly content: string;
+  readonly model: string;
+  readonly recordedAt: string;
 }
 
 /**
@@ -135,9 +148,10 @@ export async function classifyTicketText(input: ClassifyTextInput): Promise<Clas
   const { InMemorySessionService, LlmAgent, Runner } = await loadAdkRuntime();
   const { OllamaLlm } = await import('./ollama-llm.js');
   const instruction = buildClassifierInstruction(input.departments, input.categories);
+  const llm = new OllamaLlm(input.ollama, input.signal);
   const agent = new LlmAgent({
     name: 'classifier',
-    model: new OllamaLlm(input.ollama, input.signal),
+    model: llm,
     // A provider, not a string: ADK would treat `{…}` in operator text as state placeholders.
     instruction: () => instruction,
     outputSchema: OutputSchema,
@@ -175,10 +189,12 @@ export async function classifyTicketText(input: ClassifyTextInput): Promise<Clas
     if (chunk && !event.partial) text = chunk;
   }
   if (input.signal?.aborted) throw new ClassifyCancelledError();
-  if (failed || !text) throw new Error('The model did not return a classification.');
+  if (failed) throw classifierErrorFrom(llm.lastError);
+  if (!text.trim()) throw new ClassifierResponseError('empty_response');
+  input.onModelReply?.({ content: text, model: input.ollama.config.model, recordedAt: new Date().toISOString() });
   const json = extractJson(text);
   const parsed = ClassifierOutputSchema.safeParse(json);
-  if (!parsed.success) throw new Error('The model returned JSON that does not match the classifier schema.');
+  if (!parsed.success) throw new ClassifierResponseError('schema_mismatch');
   return parsed.data;
 }
 
@@ -216,6 +232,10 @@ export class ClassifyCancelledError extends Error {
 function extractJson(text: string): unknown {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
-  if (start < 0 || end <= start) throw new Error('The model did not return JSON.');
-  return JSON.parse(text.slice(start, end + 1)) as unknown;
+  if (start < 0 || end <= start) throw new ClassifierResponseError('invalid_json');
+  try {
+    return JSON.parse(text.slice(start, end + 1)) as unknown;
+  } catch {
+    throw new ClassifierResponseError('invalid_json');
+  }
 }

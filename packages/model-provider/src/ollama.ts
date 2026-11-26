@@ -3,10 +3,25 @@ export const OLLAMA_DEFAULT_MODEL = 'qwen3:8b';
 export const OLLAMA_DEFAULT_TIMEOUT_MS = 5_000;
 export const OLLAMA_GENERATE_TIMEOUT_MS = 120_000;
 
+export type OllamaErrorCode =
+  | 'invalid-url'
+  | 'redirect'
+  | 'http'
+  | 'timeout'
+  | 'network'
+  | 'invalid-response'
+  | 'empty-response';
+
+/**
+ * A typed Ollama failure. Callers decide on `code` (and `status` for `http`), never on
+ * the message. Messages are fixed text: no URL, no token, no response body.
+ */
 export class OllamaError extends Error {
   constructor(
-    readonly code: 'invalid-url' | 'redirect' | 'http' | 'timeout' | 'network' | 'invalid-response',
+    readonly code: OllamaErrorCode,
     message: string,
+    /** The HTTP status, for `code: 'http'`. */
+    readonly status: number | null = null,
   ) {
     super(message);
     this.name = 'OllamaError';
@@ -80,7 +95,12 @@ export interface OllamaClient {
 
 export function createOllamaClient(config: OllamaConfig, fetchImpl: typeof fetch = fetch): OllamaClient {
   async function request(path: string, init: { readonly method: string; readonly body?: string }, signal?: AbortSignal, timeoutMs = config.timeoutMs): Promise<Response> {
-    const url = new URL(path, `${config.baseUrl}/`);
+    let url: URL;
+    try {
+      url = new URL(path, `${config.baseUrl}/`);
+    } catch {
+      throw new OllamaError('invalid-url', 'The Ollama server URL is not valid.');
+    }
     const headers = new Headers({ accept: 'application/json' });
     if (init.body) headers.set('content-type', 'application/json');
     if (config.token && canSendToken(config.baseUrl)) headers.set('authorization', `Bearer ${config.token}`);
@@ -116,7 +136,7 @@ export function createOllamaClient(config: OllamaConfig, fetchImpl: typeof fetch
     },
     async listModels(signal) {
       const response = await request('/api/tags', { method: 'GET' }, signal);
-      if (!response.ok) throw new OllamaError('http', `Ollama returned HTTP ${response.status}.`);
+      if (!response.ok) throw new OllamaError('http', `Ollama returned HTTP ${response.status}.`, response.status);
       const body = (await response.json().catch(() => null)) as { models?: unknown } | null;
       if (!body || !Array.isArray(body.models)) {
         throw new OllamaError('invalid-response', 'Ollama returned no model list.');
@@ -147,10 +167,13 @@ export function createOllamaClient(config: OllamaConfig, fetchImpl: typeof fetch
         signal,
         config.generateTimeoutMs ?? OLLAMA_GENERATE_TIMEOUT_MS,
       );
-      if (!response.ok) throw new OllamaError('http', `Ollama returned HTTP ${response.status}.`);
-      const body = (await response.json()) as { message?: { content?: unknown } };
-      if (typeof body.message?.content !== 'string') {
+      if (!response.ok) throw new OllamaError('http', `Ollama returned HTTP ${response.status}.`, response.status);
+      const body = (await response.json().catch(() => null)) as { message?: { content?: unknown } } | null;
+      if (typeof body?.message?.content !== 'string') {
         throw new OllamaError('invalid-response', 'Ollama returned no assistant message.');
+      }
+      if (body.message.content.trim() === '') {
+        throw new OllamaError('empty-response', 'Ollama returned an empty assistant message.');
       }
       return body.message.content;
     },

@@ -114,6 +114,8 @@ The first message on a connection is `system.hello` (protocol name, version, tok
 | `categories.delete` | refused while a decision stores the id as `categoryId` or `replacedCategoryId` |
 | `tickets.setCategory` | admin: an active category only; department fields and priority do not change |
 | `tickets.setPriority` | admin: `low`, `normal`, `high`, or `urgent`; department fields and category do not change |
+| `tickets.reviewQueue` | the human review queue: `needs_review` and `failed` tickets, oldest first (tie-break: id), at most 200, with full counts (`counts.needsReview`, `counts.failed`) |
+| `tickets.decisionFeedback` | read only: decisions whose category or priority an admin reviewed (confirmations count), newest first, at most 500, with the current departments, categories, and taxonomy version. `modelCategoryId` / `modelPriority` are the model values (null included); `categoryId` / `priority` are final. No email |
 | `tickets.overrideFeedback` | read only: decided tickets whose first override replaced a classifier department (`replacedDepartmentId` and the operator `departmentId`, ticket text, confidence, rationale, quote, taxonomy version), newest first, at most 500, with the current catalogue. No email. Changes nothing |
 
 Every request and response is validated with Zod. Ticket text is untrusted data in the user message, not in the system instruction.
@@ -146,7 +148,15 @@ On each classify the host loads counts of every decision grouped by final catego
 
 The host rules are unchanged: a department or a quote that appears in the history, the summary, or `replacedDepartment` counts for nothing; only an active id at or above the threshold is applied, and only a quote found in the new ticket is kept. A repeated `externalId` returns the stored decision without a model call; if the stored ticket had no email and the repeat brings one, the email is attached and nothing is classified again. The email address is never logged.
 
-Model: company Ollama only (`OLLAMA_HOST`, `OLLAMA_MODEL`). Construct `new OllamaLlm(...)` from `@ticket/adk-runtime`, backed by `@ticket/model-provider`. No Gemini model name, no OpenAI, no cloud LLM, no web search.
+Human review queue. `needs_review` and `failed` are the department statuses that wait for a person. `tickets.reviewQueue` counts all of them and returns the oldest 200 in one SQL query (ordered by `createdAt`, then ticket id; never filtered in JavaScript). A department override sets `overridden`, so the ticket leaves the queue; a category or priority change does not resolve the department review and leaves it queued. Submitting the same `externalId` again returns the stored decision and does not re-classify, so a `failed` or `needs_review` ticket leaves the queue only through a department override (or a new `externalId`). This is a deterministic workflow, not another agent. The desktop Tickets screen has a "Review queue" view with the total and the two counts; it uses the same detail panel and override flow, and reloads the queue after an override.
+
+Fallback model. `fallbackModel` (setting, default null; `OLLAMA_FALLBACK_MODEL` overrides it, an empty variable is no override, an invalid one is reported without echoing it) is an optional second company Ollama model. At most two attempts: attempt 1 always uses the primary model; attempt 2 uses the fallback once, only when it is set and differs from the primary, and only after a retryable failure: a network failure, HTTP 500/502/503/504, an invalid or empty Ollama response, malformed JSON, or output that fails the classifier schema. Never after a timeout, a cancel (`AbortError`), another HTTP status (4xx, 501), a redirect, an invalid URL, or an unknown error, and never because of valid output the host rules reject (low confidence, unknown department or category, invalid priority or quote). Retryability is decided on typed codes (`OllamaError.code`/`status`, `ClassifierResponseError.code`), never on message text. The fallback answer goes through exactly the same host rules; two answers are never merged; only the final answer is stored; if both fail, the usual `failed` decision is stored. The classify timeout is the total budget: the fallback gets only what is left (and is skipped under 1 second), the same caller `AbortSignal` cancels either attempt, and a cancel stores nothing. A saved fallback equal to the effective primary model is refused.
+
+Decision log. After every stored classify outcome (`labeled`, `needs_review`, `failed`; never a cancel) the host calls `onDecisionEvent` with a strict, Zod-validated event: `event: "ticket_classified"`, `ticketId`, `status`, `departmentId`, `categoryId`, `priority`, `confidence`, `taxonomyVersion`, `historyCount`, `quoteAccepted`, `durationMs`, `attempts` (1 or 2), `modelRole` (`primary`/`fallback`), and a fixed `failureCode` or null. Never the external id, subject, body, email, sender id, rationale, quote text, catalogue text, model output, model name, token, or URL. `apps/agent` writes it as one line, `Decision {…}`, through its existing logger; a throwing logger never fails the classify. No cloud OTEL, no message-content tracing.
+
+`onModelReply` is a development and test hook on `AgentHostOptions` (used by the eval recorder): the complete raw assistant message of each answer. It is not reachable through the protocol, the API, the desktop, or the settings, and it is never logged.
+
+Model: company Ollama only (`OLLAMA_HOST`, `OLLAMA_MODEL`, optional `OLLAMA_FALLBACK_MODEL`). Construct `new OllamaLlm(...)` from `@ticket/adk-runtime`, backed by `@ticket/model-provider`. No Gemini model name, no OpenAI, no cloud LLM, no web search.
 
 Before importing `@google/adk`, strip the names listed in `packages/adk-runtime/src/env.ts` (`TELEMETRY_ENV_VARS`, `CLOUD_ENV_VARS`, and `ADK_FEATURE_FLAG_PATTERN`). Set `OTEL_SDK_DISABLED=true` and `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS=false`.
 
@@ -169,6 +179,7 @@ Hono on `127.0.0.1:8787` (`API_HOST`, `API_PORT`). Each route forwards to the me
 | `PATCH` `DELETE` | `/v1/categories/{id}` | API key |
 | `POST` | `/v1/tickets/{id}/category`, `/v1/tickets/{id}/priority` | API key |
 | `GET` | `/v1/tickets:override-feedback` | API key |
+| `GET` | `/v1/tickets:review-queue`, `/v1/tickets:decision-feedback` | API key |
 
 `X-API-Key` or `Authorization: Bearer`, compared in constant time on a digest, as in `apps/api/src/security.ts`. On loopback, generate a key for the API process when `API_KEY` is unset and print it once. Responses never include the agent token or the Ollama token.
 
@@ -191,6 +202,7 @@ The main process reads `AGENT_STATE_FILE`, connects with `@ticket/agent-client` 
 - Yarn 4 workspaces, Corepack, `nodeLinker: node-modules` in `.yarnrc.yml`. Workspaces are `apps/*` and `packages/*`. Node 22.12+. No pnpm. Do not copy `pnpm-workspace.yaml`.
 - Electron's postinstall must run, because it downloads the Electron binary. From phase 2, set `better-sqlite3` `dependenciesMeta.built` to `false` so Yarn keeps the prebuilt binary and does not compile it.
 - TypeScript strict, ESM, Vitest, ESLint.
+- `yarn workspace @ticket/eval run decision-feedback <export.json>` turns a category/priority feedback export into `source: "feedback"` cases and category few-shot candidates; `yarn workspace @ticket/eval run record <input.json> <output.json> --synthetic` records one live Ollama answer for a synthetic ticket into a draft suite file (`docs/eval.md`).
 - `yarn eval` runs the golden suite in `packages/eval/golden` through `createAgentHost` with a fake Ollama and exits non-zero on any failed case. Override feedback becomes eval cases and operator-approved few-shot candidates as files only; no automatic fine-tune and no automatic catalogue edit (`docs/eval.md`).
 
 ## Patterns, not files to copy
@@ -208,7 +220,7 @@ The main process reads `AGENT_STATE_FILE`, connects with `@ticket/agent-client` 
 
 ## Out of v1
 
-Research, chat, a tools package, the legacy runtime, an engine flag, an in-process agent mode, reverse calls into the shell, code execution, `dockerode`, an ADK session database, model-decided identity (linking senders by anything but the email field), pagination, idempotency-key conflicts, a second UI package. Do not build these unless a prompt asks for them. OpenAPI/Swagger, `safeStorage` for the Ollama token, the Electron utility-process supervisor, department aliases and examples, evidence quotes, taxonomy versions, and the HTTP API's CORS allow-list and classify rate limit, and sender memory keyed only by email are in.
+Research, chat, a tools package, the legacy runtime, an engine flag, an in-process agent mode, reverse calls into the shell, code execution, `dockerode`, an ADK session database, model-decided identity (linking senders by anything but the email field), pagination, idempotency-key conflicts, a second UI package. Do not build these unless a prompt asks for them. OpenAPI/Swagger, `safeStorage` for the Ollama token, the Electron utility-process supervisor, department aliases and examples, evidence quotes, taxonomy versions, and the HTTP API's CORS allow-list and classify rate limit, sender memory keyed only by email, problem categories and priority, the human review queue, category/priority feedback export, recorded-reply eval drafts, the structured decision log, and one bounded fallback-model attempt are in.
 
 ## Later
 

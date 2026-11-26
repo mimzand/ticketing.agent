@@ -24,6 +24,7 @@ import {
   DeleteCategoryResultSchema,
   SetTicketCategorySchema,
   SetTicketPrioritySchema,
+  ReviewQueueSchema,
   type RendererApi,
 } from '@ticket/shared';
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
@@ -72,6 +73,7 @@ const api: RendererApi = {
   cancelClassify: async (input) =>
     CancelClassifyResultSchema.parse(await ipcRenderer.invoke(IpcChannels.cancelClassify, input)),
   listTickets: async () => TicketViewSchema.array().parse(await ipcRenderer.invoke(IpcChannels.listTickets)),
+  reviewQueue: async () => ReviewQueueSchema.parse(await ipcRenderer.invoke(IpcChannels.reviewQueue)),
   overrideTicket: async (input) =>
     TicketViewSchema.parse(
       await ipcRenderer.invoke(IpcChannels.overrideTicket, OverrideTicketSchema.parse(input)),

@@ -4,11 +4,19 @@ import {
   type Category,
   type Department,
   type TicketContext,
+  type ReviewQueue,
   type TicketPriority,
   type TicketView,
 } from '@ticket/shared';
 import { computed, onMounted, ref } from 'vue';
 import { PRIORITY_OPTIONS } from '../category-form.js';
+import {
+  applyQueueUpdate,
+  EMPTY_REVIEW_QUEUE,
+  loadReviewQueue,
+  refreshAfterOverride,
+  reviewQueueSummary,
+} from '../review-queue.js';
 import {
   errorMessage,
   formatConfidence,
@@ -57,14 +65,31 @@ const priorityChoice = ref<TicketPriority | ''>('');
 const reviewing = ref(false);
 const reviewError = ref('');
 
+/** Which list the table shows: the 50 most recent, or the human review queue. */
+const listView = ref<'recent' | 'review'>('recent');
+const queue = ref<ReviewQueue>(EMPTY_REVIEW_QUEUE);
+const queueError = ref('');
+const queueSummary = computed(() => reviewQueueSummary(queue.value));
+
 const activeDepartments = computed(() => departments.value.filter((department) => department.active));
 const activeCategories = computed(() => categories.value.filter((category) => category.active));
+const shownTickets = computed(() => (listView.value === 'review' ? queue.value.tickets : tickets.value));
 const rows = computed(() =>
-  tickets.value.map((ticket) => ticketRow(ticket, departments.value, undefined, categories.value)),
+  shownTickets.value.map((ticket) => ticketRow(ticket, departments.value, undefined, categories.value)),
 );
-const selected = computed(() => tickets.value.find((ticket) => ticket.id === selectedId.value) ?? null);
+/** The same detail panel for both lists: a queue ticket may be older than the recent 50. */
+const selected = computed(
+  () =>
+    shownTickets.value.find((ticket) => ticket.id === selectedId.value) ??
+    tickets.value.find((ticket) => ticket.id === selectedId.value) ??
+    queue.value.tickets.find((ticket) => ticket.id === selectedId.value) ??
+    null,
+);
 const selectedFields = computed(() => (selected.value ? ticketFields(selected.value) : null));
-const selectedRow = computed(() => rows.value.find((row) => row.id === selectedId.value) ?? null);
+// From the selected ticket itself: it stays open after an override removes it from the queue.
+const selectedRow = computed(() =>
+  selected.value ? ticketRow(selected.value, departments.value, undefined, categories.value) : null,
+);
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -78,11 +103,27 @@ async function load(): Promise<void> {
     tickets.value = [...ticketList];
     departments.value = [...departmentList];
     categories.value = [...categoryList];
+    await refreshQueue();
   } catch (error) {
     loadError.value = errorMessage(error);
   } finally {
     loading.value = false;
   }
+}
+
+async function refreshQueue(): Promise<void> {
+  queueError.value = '';
+  try {
+    queue.value = await loadReviewQueue(window.api);
+  } catch (error) {
+    queueError.value = errorMessage(error);
+  }
+}
+
+/** Puts a changed ticket into both lists; the queue drops it once it is resolved. */
+function replaceTicket(updated: TicketView): void {
+  tickets.value = tickets.value.map((ticket) => (ticket.id === updated.id ? updated : ticket));
+  queue.value = applyQueueUpdate(queue.value, updated);
 }
 
 function select(id: string): void {
@@ -198,8 +239,11 @@ async function override(): Promise<void> {
       id: selected.value.id,
       departmentId: overrideDepartmentId.value,
     });
-    tickets.value = tickets.value.map((ticket) => (ticket.id === updated.id ? updated : ticket));
+    const before = queue.value;
+    replaceTicket(updated);
     overrideDepartmentId.value = '';
+    // A department override resolves a review: reload the queue from the agent.
+    queue.value = await refreshAfterOverride(before, updated, window.api);
   } catch (error) {
     overrideError.value = errorMessage(error);
   } finally {
@@ -218,7 +262,8 @@ async function review(kind: 'category' | 'priority'): Promise<void> {
       kind === 'category'
         ? await window.api.setTicketCategory({ id, categoryId: categoryChoice.value })
         : await window.api.setTicketPriority({ id, priority: priorityChoice.value as TicketPriority });
-    tickets.value = tickets.value.map((ticket) => (ticket.id === updated.id ? updated : ticket));
+    // Category and priority do not resolve the department review: the row stays queued.
+    replaceTicket(updated);
     if (kind === 'category') categoryChoice.value = '';
     else priorityChoice.value = '';
   } catch (error) {
@@ -308,10 +353,48 @@ onMounted(load);
       {{ loadError }} <button type="button" class="link" @click="load">Retry</button>
     </p>
 
+    <div class="views" role="tablist" aria-label="Ticket lists">
+      <button
+        type="button"
+        role="tab"
+        :aria-selected="listView === 'recent'"
+        data-testid="view-recent"
+        @click="listView = 'recent'"
+      >
+        Recent
+      </button>
+      <button
+        type="button"
+        role="tab"
+        :aria-selected="listView === 'review'"
+        data-testid="view-review"
+        @click="
+          listView = 'review';
+          void refreshQueue();
+        "
+      >
+        Review queue
+        <span class="badge" :data-tone="queueSummary.total > 0 ? 'warn' : undefined" data-testid="review-total">
+          {{ queueSummary.total }}
+        </span>
+      </button>
+      <p v-if="listView === 'review'" class="muted queue-counts" data-testid="review-counts" role="status">
+        {{ queueSummary.label }}<template v-if="queueSummary.total > queue.tickets.length">
+          · showing the oldest {{ queue.tickets.length }}</template
+        >
+      </p>
+    </div>
+    <p v-if="listView === 'review' && queueError" class="notice" data-tone="error" role="alert">
+      {{ queueError }} <button type="button" class="link" @click="refreshQueue">Retry</button>
+    </p>
+
     <div class="layout" :data-detail="selected ? 'open' : 'closed'">
       <div class="card list">
         <p v-if="loading && tickets.length === 0" class="muted" role="status">Loading tickets…</p>
-        <p v-else-if="tickets.length === 0" class="muted">No tickets yet. Use “New ticket” to submit one.</p>
+        <p v-else-if="listView === 'review' && queue.tickets.length === 0" class="muted" data-testid="review-empty">
+          Nothing to review: no ticket is waiting with needs review or failed.
+        </p>
+        <p v-else-if="listView === 'recent' && tickets.length === 0" class="muted">No tickets yet. Use “New ticket” to submit one.</p>
         <table v-else>
           <thead>
             <tr>
@@ -512,6 +595,20 @@ onMounted(load);
 </template>
 
 <style scoped>
+.views {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.views [role='tab'][aria-selected='true'] {
+  background: var(--selected);
+  color: var(--accent);
+  font-weight: 600;
+}
+.queue-counts {
+  margin: 0 0 0 8px;
+}
 .section {
   display: grid;
   gap: 16px;

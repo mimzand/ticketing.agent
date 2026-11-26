@@ -979,3 +979,35 @@ describe('problem categories and priority', () => {
     expect(lastChat().system).not.toContain('how-to: ');
   }, 60_000);
 });
+
+describe('review queue and decision feedback through the host', () => {
+  it('lists needs_review and failed tickets oldest first; an override resolves one, a category or priority change does not', async () => {
+    let reply: unknown = { departmentId: 'billing', confidence: 0.2, rationale: 'Unsure.' };
+    const host = hostFor(await fakeOllama(() => reply));
+    host.createCategory({ id: 'outage', name: 'Outage', description: '', defaultPriority: 'urgent' });
+    const first = await host.classify({ externalId: 'rq-1', subject: 'A', body: 'x', channel: 'email' });
+    await new Promise((r) => setTimeout(r, 3));
+    reply = { departmentId: 'billing', confidence: 0.9, rationale: 'Sure.' };
+    await host.classify({ externalId: 'rq-2', subject: 'B', body: 'x', channel: 'email' });
+    await new Promise((r) => setTimeout(r, 3));
+    reply = 'down';
+    const third = await host.classify({ externalId: 'rq-3', subject: 'C', body: 'x', channel: 'email' });
+    expect(third.decision.status).toBe('failed');
+
+    const queue = host.reviewQueue();
+    expect(queue.counts).toEqual({ needsReview: 1, failed: 1 });
+    expect(queue.tickets.map((t) => t.id)).toEqual([first.id, third.id]);
+
+    host.setCategory({ id: first.id, categoryId: 'outage' });
+    host.setPriority({ id: first.id, priority: 'high' });
+    expect(host.reviewQueue().tickets.map((t) => t.id)).toEqual([first.id, third.id]);
+    host.override({ id: first.id, departmentId: 'billing' });
+    expect(host.reviewQueue()).toMatchObject({ counts: { needsReview: 0, failed: 1 }, tickets: [{ id: third.id }] });
+
+    const feedback = host.decisionFeedback();
+    expect(feedback.categories.map((c) => c.id)).toEqual(['outage']);
+    expect(feedback.departments.map((d) => d.id)).toEqual(['billing']);
+    expect(feedback.items).toHaveLength(1);
+    expect(feedback.items[0]).toMatchObject({ ticketId: first.id, categoryReviewed: true, modelCategoryId: null, categoryId: 'outage', priorityReviewed: true, modelPriority: null, priority: 'high' });
+  }, 30_000);
+});

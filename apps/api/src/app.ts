@@ -11,6 +11,8 @@ import {
   listTickets,
   mergeSenders,
   overrideFeedback,
+  decisionFeedback,
+  reviewQueue,
   createCategory,
   deleteCategory,
   listCategories,
@@ -131,6 +133,14 @@ export function createApiApp(deps: ApiDeps): Hono {
   });
   app.post('/v1/senders:merge', async (c) => {
     const result = await mergeSenders(c, deps.agent);
+    return c.json(result.body, result.status);
+  });
+  app.get('/v1/tickets:review-queue', async (c) => {
+    const result = await reviewQueue(deps.agent);
+    return c.json(result.body, result.status);
+  });
+  app.get('/v1/tickets:decision-feedback', async (c) => {
+    const result = await decisionFeedback(deps.agent);
     return c.json(result.body, result.status);
   });
   app.get('/v1/tickets:override-feedback', async (c) => {

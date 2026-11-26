@@ -103,10 +103,24 @@ export const OverrideOriginSchema = z.strictObject({
   taxonomyVersion: z.int().min(0),
 });
 
+/** Where a category/priority feedback case came from: the admin review, never the email. */
+export const FeedbackOriginSchema = z.strictObject({
+  ticketId: z.uuid(),
+  categoryReviewed: z.boolean(),
+  modelCategoryId: DepartmentIdSchema.nullable(),
+  priorityReviewed: z.boolean(),
+  modelPriority: TicketPrioritySchema.nullable(),
+  taxonomyVersion: z.int().min(0),
+});
+export type FeedbackOrigin = z.infer<typeof FeedbackOriginSchema>;
+
 export const EvalCaseSchema = z.strictObject({
   id: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,79}$/, 'A case id is lowercase letters, digits, dots, dashes, underscores.'),
-  /** `golden`: written by hand. `override`: generated from an operator override. */
-  source: z.enum(['golden', 'override']),
+  /**
+   * `golden`: written by hand (or recorded and reviewed). `override`: generated from a
+   * department override. `feedback`: generated from an admin category/priority review.
+   */
+  source: z.enum(['golden', 'override', 'feedback']),
   description: z.string().max(500).optional(),
   /** Key into the file's `catalogues`. */
   catalogue: z.string().min(1).max(64),
@@ -122,6 +136,8 @@ export const EvalCaseSchema = z.strictObject({
   wrongReply: ModelReplySchema.optional(),
   expect: ExpectationSchema,
   origin: OverrideOriginSchema.optional(),
+  /** Set exactly for `source: "feedback"`. */
+  feedbackOrigin: FeedbackOriginSchema.optional(),
 });
 export type EvalCase = z.infer<typeof EvalCaseSchema>;
 
@@ -165,6 +181,13 @@ export const SuiteFileSchema = z
       }
       if ((c.source === 'override') !== (c.origin !== undefined)) {
         ctx.addIssue({ code: 'custom', message: 'origin is set exactly for override cases.', path: [...path, 'origin'] });
+      }
+      if ((c.source === 'feedback') !== (c.feedbackOrigin !== undefined)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'feedbackOrigin is set exactly for feedback cases.',
+          path: [...path, 'feedbackOrigin'],
+        });
       }
       if (c.history.length > 0 && !c.ticket.email) {
         ctx.addIssue({ code: 'custom', message: 'History needs the ticket email.', path: [...path, 'ticket', 'email'] });

@@ -1,6 +1,12 @@
 import { type SettingField } from '@ticket/shared';
 import { describe, expect, it } from 'vitest';
-import { fieldState, SETTINGS_CATEGORIES, SETTINGS_CATEGORY_LABELS } from './settings-fields.js';
+import {
+  fallbackModelOptions,
+  fallbackModelProblem,
+  fieldState,
+  SETTINGS_CATEGORIES,
+  SETTINGS_CATEGORY_LABELS,
+} from './settings-fields.js';
 
 describe('fieldState', () => {
   it('makes an OLLAMA_HOST override read-only and labels it with the variable name', () => {
@@ -39,5 +45,30 @@ describe('fieldState', () => {
       'Classification',
       'Storage',
     ]);
+  });
+});
+
+describe('fallback model choices', () => {
+  it('lists the server models without the primary and keeps an unlisted current value', () => {
+    expect(fallbackModelOptions(['qwen3:8b', 'llama3:8b', 'mistral'], 'qwen3:8b', null)).toEqual(['llama3:8b', 'mistral']);
+    expect(fallbackModelOptions(['qwen3:8b'], 'qwen3:8b', 'old-model')).toEqual(['old-model']);
+    expect(fallbackModelOptions(['qwen3:8b'], 'qwen3:8b', 'qwen3:8b')).toEqual([]);
+  });
+
+  it('refuses the primary model as the fallback and allows disabled', () => {
+    expect(fallbackModelProblem('qwen3:8b', 'qwen3:8b')).toMatch(/must differ/);
+    expect(fallbackModelProblem('qwen3:8b', null)).toBeNull();
+    expect(fallbackModelProblem('qwen3:8b', 'llama3:8b')).toBeNull();
+  });
+
+  it('shows an OLLAMA_FALLBACK_MODEL override like the primary model', () => {
+    const field: SettingField<'fallbackModel'> = {
+      value: 'llama3:8b',
+      source: 'env',
+      saved: null,
+      envVar: 'OLLAMA_FALLBACK_MODEL',
+      envError: null,
+    };
+    expect(fieldState(field)).toEqual({ readOnly: true, sourceLabel: 'Overridden by OLLAMA_FALLBACK_MODEL', envError: null });
   });
 });

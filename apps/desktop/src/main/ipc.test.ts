@@ -20,7 +20,10 @@ function fakeSafeStorage(available = true): SafeStorageLike {
 }
 
 function settingsView(tokenSet: boolean): SettingsView {
-  const field = <T,>(value: T, envVar: 'OLLAMA_HOST' | 'OLLAMA_MODEL' | 'CLASSIFY_MIN_CONFIDENCE' | null = null) => ({
+  const field = <T,>(
+    value: T,
+    envVar: 'OLLAMA_HOST' | 'OLLAMA_MODEL' | 'CLASSIFY_MIN_CONFIDENCE' | 'OLLAMA_FALLBACK_MODEL' | null = null,
+  ) => ({
     value,
     source: 'default' as const,
     saved: null,
@@ -34,6 +37,7 @@ function settingsView(tokenSet: boolean): SettingsView {
       model: field(SETTINGS_DEFAULTS.model, 'OLLAMA_MODEL'),
       classifyTimeoutMs: field(SETTINGS_DEFAULTS.classifyTimeoutMs),
       minConfidence: field(SETTINGS_DEFAULTS.minConfidence, 'CLASSIFY_MIN_CONFIDENCE'),
+      fallbackModel: field<string | null>(SETTINGS_DEFAULTS.fallbackModel, 'OLLAMA_FALLBACK_MODEL'),
     },
     tokenSet,
   };
@@ -83,6 +87,7 @@ function fakeAgent() {
     'departments.taxonomy': () => ({ current: 1, history: [{ version: 1, createdAt: '2026-01-01T00:00:00.000Z', departmentCount: 1 }] }),
     'tickets.classify': () => ticket,
     'tickets.list': () => [ticket],
+    'tickets.reviewQueue': () => ({ counts: { needsReview: 1, failed: 0 }, tickets: [{ ...ticket, decision: { ...ticket.decision, status: 'needs_review', departmentId: null } }] }),
     'tickets.override': () => ticket,
     'tickets.setCategory': () => ticket,
     'tickets.setPriority': () => ticket,

@@ -42,7 +42,7 @@ Append an object to `cases` in `golden/golden.json` (or start a new file in `gol
 ```jsonc
 {
   "id": "billing-invoice",               // unique in the file: lowercase, digits, . _ -
-  "source": "golden",                    // hand-written ("override" is for generated cases)
+  "source": "golden",                    // hand-written ("override" and "feedback" are generated)
   "description": "A wrong invoice amount goes to billing.",
   "catalogue": "default",                // a key of "catalogues"
   "ticket": { "externalId": "g-001", "subject": "…", "body": "…", "channel": "email" },
@@ -127,3 +127,87 @@ the classifier's department as `replacedDepartmentId`. Those rows are the feedba
 `packages/eval/fixtures/override-feedback.sample.json` is a synthetic export.
 `golden/overrides-sample.json` and `fixtures/few-shot-candidates.sample.json` are generated
 from it, and a test keeps them in step with the generator.
+
+## Category and priority feedback
+
+The department override feedback above stays as it is. Admin category and priority reviews
+have their own export and their own cases.
+
+1. **Export** (read only, API key):
+
+   ```sh
+   mkdir -p eval-out
+   curl -H "X-API-Key: $API_KEY" http://127.0.0.1:8787/v1/tickets:decision-feedback > eval-out/decision-feedback.json
+   ```
+
+   Over the protocol the method is `tickets.decisionFeedback`. The export holds up to 500 rows, newest first, with the current departments, categories, and taxonomy version.
+   - A row is included when `categoryReviewed` or `priorityReviewed` is true. This includes an admin confirming the model's value, and a model value of null.
+   - `modelCategoryId` / `modelPriority` are what the model had stored. `categoryId` / `priority` are the final values.
+   - The export has no email and no sender identity.
+
+2. **Generate**:
+
+   ```sh
+   yarn workspace @ticket/eval run decision-feedback eval-out/decision-feedback.json   # writes to eval-out/
+   ```
+
+   - `decision-feedback-cases.json`: one `source: "feedback"` case per reviewed row, with a `feedbackOrigin` (ticket id, the review flags, and the model values).
+     - `expect` holds `categoryId` only when the category was reviewed, and `priority` only when the priority was reviewed, with the admin's final values.
+     - The placeholder `reply` answers a valid active department (the stored one when it is active, else the first active one) above the threshold. This judges category and priority apart from routing.
+     - `wrongReply` carries the model's original values for the reviewed fields. It is added only when one of them differs; a confirmation is a positive case without one.
+     - Rows are skipped, with a reason, when no department is active or the reviewed category is no longer active.
+   - `category-few-shot-candidates.json`: one example per row whose category was reviewed and whose final category exists and is active (`subject — body`, whitespace collapsed, addresses replaced by `[email]`, at most 300 characters).
+     - Examples the category already has are skipped.
+     - Each candidate is marked `approval: "operator"`.
+     - There are no priority examples: priority learns from the admin trend lines in the instruction.
+
+3. **Review.** As with override feedback, the generated files hold real ticket text and stay in the git-ignored `eval-out/`. Nothing is written to a category or a golden file automatically. An admin copies an approved example into the category's examples, or rewrites a case with synthetic text before moving it into `packages/eval/golden/`.
+
+`fixtures/decision-feedback.sample.json` is a synthetic export. `golden/decision-feedback-sample.json` and `fixtures/category-few-shot-candidates.sample.json` are generated from it, and a test keeps them in step.
+
+## Record a live Ollama reply
+
+`reply.kind: "recorded"` replays a real model answer. To capture one from the company Ollama server for a **synthetic or privacy-reviewed** ticket:
+
+```sh
+yarn workspace @ticket/eval run record path/to/input.json path/to/draft.json --synthetic
+```
+
+> **Privacy:** the ticket text is sent to the Ollama server and written into the draft. Use only invented tickets, or tickets whose text has been reviewed and cleared. Without `--synthetic` the command refuses to run.
+
+The input (`RecordInputSchema` in `packages/eval/src/record.ts`) is strict JSON:
+
+```jsonc
+{
+  "suite": "recorded",
+  "caseId": "vpn-drops",
+  "description": "optional",
+  "threshold": 0.7,
+  "departments": [{ "id": "it", "name": "IT", "description": "VPN and laptops" }],
+  "categories": [{ "id": "outage", "name": "Outage", "description": "", "defaultPriority": "urgent" }],
+  "ticket": { "externalId": "rec-1", "subject": "…", "body": "…", "channel": "email" },
+  "expect": { "status": "labeled", "departmentId": "it", "categoryId": "outage", "priority": "high" }
+}
+```
+
+- `expect` is required and written by a person. The live answer never replaces it.
+- `ticket.email` is refused: a recorded draft carries no sender identity.
+- `categories` is optional.
+
+How it runs:
+
+- It uses the real production path in a temporary database. That means a real `createAgentHost`, the real instruction from `buildClassifierInstruction`, and the real ADK classifier, against the server from `OLLAMA_HOST`, `OLLAMA_MODEL`, and `OLLAMA_TOKEN`. The fallback model is off while recording.
+- The raw assistant message comes from the host's `onModelReply` hook, kept exactly as received.
+
+What it writes and prints:
+
+- It writes a new suite file with one golden case whose reply is `{ kind: "recorded", content, model, recordedAt }`.
+- It prints expected vs actual for status, department, and (when set) category and priority. It never prints the token, the server URL, or the model output.
+
+When it refuses or fails:
+
+- If the live answer does not meet the expectation, it still writes the draft but exits non-zero and says the expected value was not changed.
+- If the model gives no answer, it writes nothing.
+- It refuses to write into `packages/eval/golden/` and never overwrites an existing file.
+
+Review the draft, then move it into `packages/eval/golden/` yourself.

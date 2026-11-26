@@ -1,0 +1,27 @@
+{
+  "formatVersion": 1,
+  "approval": "operator",
+  "candidates": [
+    {
+      "categoryId": "outage",
+      "example": "Checkout returns error 500 — Customers cannot pay. Reach me at [email].",
+      "modelCategoryId": null,
+      "ticketId": "00000000-0000-4000-8000-00000000c001",
+      "taxonomyVersion": 3
+    },
+    {
+      "categoryId": "outage",
+      "example": "VPN down for everyone — Nobody can connect since 8:00.",
+      "modelCategoryId": "how-to",
+      "ticketId": "00000000-0000-4000-8000-00000000c003",
+      "taxonomyVersion": 3
+    },
+    {
+      "categoryId": "outage",
+      "example": "Website returns error 500 — Same as the example.",
+      "modelCategoryId": "outage",
+      "ticketId": "00000000-0000-4000-8000-00000000c004",
+      "taxonomyVersion": 3
+    }
+  ]
+}

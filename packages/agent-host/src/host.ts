@@ -1,4 +1,4 @@
-import { ClassifyCancelledError, classifyTicketText } from '@ticket/adk-runtime';
+import { ClassifyCancelledError, classifyTicketText, type ModelReply } from '@ticket/adk-runtime';
 import {
   canSendToken,
   createOllamaClient,
@@ -52,8 +52,20 @@ import {
   type SetTicketPriority,
   type TicketPriority,
   type UpdateCategory,
+  type ClassifierOutput,
+  DECISION_FEEDBACK_LIMIT,
+  DecisionFeedbackSchema,
+  REVIEW_QUEUE_LIMIT,
+  type DecisionFeedback,
+  type ReviewQueue,
 } from '@ticket/shared';
 import { type SaveDecisionInput, type TicketDatabase } from '@ticket/storage';
+import {
+  DecisionEventSchema,
+  failureCodeOf,
+  isRetryable,
+  type DecisionEvent,
+} from './decision-event.js';
 import { overriddenKeys, resolveSettings, type ResolvedSettings } from './settings.js';
 
 export type HostErrorCode = 'bad_request' | 'not_found' | 'conflict' | 'cancelled';
@@ -120,6 +132,16 @@ export interface AgentHost {
    * current catalogue. No email. Nothing is written to departments or examples.
    */
   overrideFeedback(): OverrideFeedback;
+  /**
+   * The human review queue: `needs_review` and `failed` tickets, oldest first, at
+   * most 200, with full counts. A department override resolves a ticket.
+   */
+  reviewQueue(): ReviewQueue;
+  /**
+   * Read-only export of admin-reviewed category and priority decisions, with the
+   * current catalogues. No email. Nothing is written anywhere.
+   */
+  decisionFeedback(): DecisionFeedback;
   /** Every category, inactive ones included. */
   listCategories(): readonly Category[];
   createCategory(input: CreateCategoryInput): Category;
@@ -154,6 +176,16 @@ export interface AgentHostOptions {
   readonly databasePath?: string;
   /** Tests only. */
   readonly fetch?: typeof fetch;
+  /**
+   * One secret-free event per stored classify outcome (not for a cancel). A throwing
+   * callback never fails the classify.
+   */
+  readonly onDecisionEvent?: (event: DecisionEvent) => void;
+  /**
+   * Development and test hook (eval recording): the complete raw assistant message of
+   * each model answer. Not exposed through the protocol, the API, or the desktop.
+   */
+  readonly onModelReply?: (reply: ModelReply) => void;
 }
 
 export function createAgentHost(options: AgentHostOptions): AgentHost {
@@ -249,6 +281,15 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
         items: db.overrideFeedback(OVERRIDE_FEEDBACK_LIMIT),
       });
     },
+    reviewQueue: () => db.reviewQueue(REVIEW_QUEUE_LIMIT),
+    decisionFeedback() {
+      return DecisionFeedbackSchema.parse({
+        taxonomyVersion: db.taxonomyVersion(),
+        departments: db.listDepartments(),
+        categories: db.listCategories(),
+        items: db.decisionFeedback(DECISION_FEEDBACK_LIMIT),
+      });
+    },
     listCategories: () => db.listCategories(),
     createCategory(raw) {
       const parsed = CreateCategorySchema.safeParse(raw);
@@ -300,7 +341,24 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
     classify: (input, signal) =>
       exclusive(() => {
         const { values } = resolved();
-        return classifyOnce(db, clientFor(values), values.minConfidence, input, signal);
+        // A fallback equal to the primary model is never a second attempt.
+        const fallbackModel =
+          values.fallbackModel !== null && values.fallbackModel !== values.model ? values.fallbackModel : null;
+        return classifyOnce(
+          {
+            db,
+            minConfidence: values.minConfidence,
+            classifyTimeoutMs: values.classifyTimeoutMs,
+            primary: clientFor(values),
+            fallbackFor: fallbackModel
+              ? (timeoutMs) => clientFor({ ...values, model: fallbackModel, classifyTimeoutMs: timeoutMs })
+              : null,
+            onDecisionEvent: options.onDecisionEvent,
+            onModelReply: options.onModelReply,
+          },
+          input,
+          signal,
+        );
       }),
 
     getSettings: view,
@@ -314,6 +372,11 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       if (blocked.length > 0) {
         const vars = blocked.map((key) => current.fields[key].envVar).join(', ');
         throw new HostError(`Overridden by ${vars}; remove the variable to change it here.`);
+      }
+      // The fallback must differ from the primary model that would be in effect.
+      const next = resolveSettings({ ...db.readSettings(), ...parsed.data }, env).values;
+      if (next.fallbackModel !== null && next.fallbackModel === next.model) {
+        throw new HostError('The fallback model must differ from the primary model.');
       }
       db.writeSettings(parsed.data);
       return view();
@@ -379,13 +442,24 @@ function describeOllamaError(error: unknown): string {
 
 const cancelled = () => new HostError('The classify was cancelled. Nothing was stored.', 'cancelled');
 
-async function classifyOnce(
-  db: TicketDatabase,
-  ollama: OllamaClient,
-  minConfidence: number,
-  input: ClassifyTicket,
-  signal?: AbortSignal,
-): Promise<TicketView> {
+/** Below this many milliseconds of the classify budget, the fallback model is not started. */
+export const FALLBACK_MIN_BUDGET_MS = 1_000;
+
+interface ClassifyRun {
+  readonly db: TicketDatabase;
+  readonly minConfidence: number;
+  /** The caller-visible budget for every attempt together. */
+  readonly classifyTimeoutMs: number;
+  readonly primary: OllamaClient;
+  /** A client for the fallback model with the remaining budget, or null when none is configured. */
+  readonly fallbackFor: ((timeoutMs: number) => OllamaClient) | null;
+  readonly onDecisionEvent?: ((event: DecisionEvent) => void) | undefined;
+  readonly onModelReply?: ((reply: ModelReply) => void) | undefined;
+}
+
+async function classifyOnce(run: ClassifyRun, input: ClassifyTicket, signal?: AbortSignal): Promise<TicketView> {
+  const { db, minConfidence } = run;
+  const startedAt = Date.now();
   // A stored decision is returned as is: no second model call. A repeat that brings
   // an email for a ticket stored without one only attaches the email.
   const stored = db.findByExternalId(input.externalId);
@@ -413,62 +487,106 @@ async function classifyOnce(
   const categories = db.listCategories().filter((category) => category.active);
   const listed = new Set(categories.map((category) => category.id));
   const trends = priorityTrends(db.priorityAggregates()).filter((trend) => listed.has(trend.categoryId));
-  let decision: SaveDecisionInput;
-  try {
-    const output = await classifyTicketText({
+
+  const ask = (ollama: OllamaClient) =>
+    classifyTicketText({
       ollama,
       departments: active,
       ticket: input,
       history,
       categories: { categories, priorityTrends: trends },
       ...(signal && { signal }),
+      ...(run.onModelReply && { onModelReply: run.onModelReply }),
     });
+  const stopIfCancelled = (error?: unknown) => {
+    if (signal?.aborted || error instanceof ClassifyCancelledError) {
+      db.discardUndecided(created.id);
+      throw cancelled();
+    }
+  };
+
+  // At most two attempts: the primary model, then the fallback model once, only after
+  // a retryable failure and only within the same total budget. A response is never
+  // merged with another one; the one that parses goes through the host rules below.
+  let output: ClassifierOutput | null = null;
+  let attempts: 1 | 2 = 1;
+  let modelRole: 'primary' | 'fallback' = 'primary';
+  let failure: unknown = null;
+  try {
+    output = await ask(run.primary);
+  } catch (error) {
+    stopIfCancelled(error);
+    failure = error;
+  }
+  const remaining = run.classifyTimeoutMs - (Date.now() - startedAt);
+  if (output === null && run.fallbackFor && isRetryable(failure) && remaining >= FALLBACK_MIN_BUDGET_MS) {
+    attempts = 2;
+    modelRole = 'fallback';
+    try {
+      output = await ask(run.fallbackFor(remaining));
+      failure = null;
+    } catch (error) {
+      stopIfCancelled(error);
+      failure = error;
+    }
+  }
+
+  let decision: SaveDecisionInput;
+  if (output === null) {
+    decision = failed(taxonomyVersion);
+  } else {
     // Independent of the department rules: an exact active category id or null, one of
     // the four priorities or null. Nothing is coerced, and a category default never
     // replaces the model's priority.
     const categoryId = typeof output.categoryId === 'string' && listed.has(output.categoryId) ? output.categoryId : null;
     const priority: TicketPriority | null = TicketPrioritySchema.safeParse(output.priority).data ?? null;
     // Only an exact active id counts; an alias or a name is not an id.
-    const known = active.some((department) => department.id === output.departmentId);
+    const departmentId = output.departmentId;
+    const known = active.some((department) => department.id === departmentId);
     // Kept only if it is an exact substring of this ticket; never re-asked.
     const quote = acceptQuote(output.quote, input);
-    if (!known || output.confidence < minConfidence) {
-      decision = {
-        departmentId: null,
-        confidence: output.confidence,
-        rationale: output.rationale,
-        status: 'needs_review',
-        quote,
-        taxonomyVersion,
-        categoryId,
-        priority,
-      };
-    } else {
-      decision = {
-        departmentId: output.departmentId,
-        confidence: output.confidence,
-        rationale: output.rationale,
-        status: 'labeled',
-        quote,
-        taxonomyVersion,
-        categoryId,
-        priority,
-      };
-    }
-  } catch (error) {
-    if (signal?.aborted || error instanceof ClassifyCancelledError) {
-      db.discardUndecided(created.id);
-      throw cancelled();
-    }
-    decision = failed(taxonomyVersion);
+    const labeled = known && output.confidence >= minConfidence;
+    decision = {
+      departmentId: labeled ? departmentId : null,
+      confidence: output.confidence,
+      rationale: output.rationale,
+      status: labeled ? 'labeled' : 'needs_review',
+      quote,
+      taxonomyVersion,
+      categoryId,
+      priority,
+    };
   }
   // Cancelled after the model answered but before the save: store nothing.
-  if (signal?.aborted) {
-    db.discardUndecided(created.id);
-    throw cancelled();
-  }
+  stopIfCancelled();
   db.saveDecision(created.id, decision);
   const view = db.getById(created.id);
   if (!view) throw new HostError('No such ticket.', 'not_found');
+  emitDecisionEvent(run.onDecisionEvent, {
+    event: 'ticket_classified',
+    ticketId: view.id,
+    status: decision.status === 'labeled' || decision.status === 'needs_review' ? decision.status : 'failed',
+    departmentId: view.decision.departmentId,
+    categoryId: view.decision.categoryId,
+    priority: view.decision.priority,
+    confidence: view.decision.confidence,
+    taxonomyVersion: view.decision.taxonomyVersion,
+    historyCount: history.length,
+    quoteAccepted: view.decision.quote !== null,
+    durationMs: Math.max(0, Math.round(Date.now() - startedAt)),
+    attempts,
+    modelRole,
+    failureCode: output === null ? failureCodeOf(failure) : null,
+  });
   return view;
+}
+
+/** Logging never fails a classify: an invalid event or a throwing callback is dropped. */
+function emitDecisionEvent(callback: ((event: DecisionEvent) => void) | undefined, event: DecisionEvent): void {
+  if (!callback) return;
+  try {
+    callback(DecisionEventSchema.parse(event));
+  } catch {
+    // Swallowed on purpose: the decision is already stored.
+  }
 }

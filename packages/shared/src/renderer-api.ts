@@ -33,6 +33,7 @@ import {
   type SetTicketPriority,
   type UpdateCategory,
 } from './category.js';
+import { type ReviewQueue } from './review.js';
 
 /** Name of the object the preload exposes on `window`. */
 export const RENDERER_API_KEY = 'api';
@@ -52,6 +53,7 @@ export const IpcChannels = {
   classifyTicket: 'tickets:classify',
   cancelClassify: 'tickets:cancel-classify',
   listTickets: 'tickets:list',
+  reviewQueue: 'tickets:review-queue',
   overrideTicket: 'tickets:override',
   setTicketCategory: 'tickets:set-category',
   setTicketPriority: 'tickets:set-priority',
@@ -98,6 +100,8 @@ export interface RendererApi {
    */
   cancelClassify(input: CancelClassify): Promise<CancelClassifyResult>;
   listTickets(): Promise<readonly TicketView[]>;
+  /** needs_review and failed tickets, oldest first, at most 200, with full counts. */
+  reviewQueue(): Promise<ReviewQueue>;
   overrideTicket(input: OverrideTicket): Promise<TicketView>;
   /** Admin category (active only). Department fields and priority do not change. */
   setTicketCategory(input: SetTicketCategory): Promise<TicketView>;

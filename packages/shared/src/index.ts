@@ -132,7 +132,13 @@ export {
   OverrideFeedbackSchema,
   type OverrideFeedback,
   type OverrideFeedbackItem,
+  DECISION_FEEDBACK_LIMIT,
+  DecisionFeedbackItemSchema,
+  DecisionFeedbackSchema,
+  type DecisionFeedback,
+  type DecisionFeedbackItem,
 } from './feedback.js';
+export { REVIEW_QUEUE_LIMIT, REVIEW_STATUSES, ReviewQueueSchema, type ReviewQueue } from './review.js';
 export { TICKET_PRIORITIES, TicketPrioritySchema, type TicketPriority } from './priority.js';
 export {
   CATEGORY_IN_USE_MESSAGE,

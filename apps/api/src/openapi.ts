@@ -10,6 +10,10 @@ import {
   MergeSendersSchema,
   OVERRIDE_FEEDBACK_LIMIT,
   OverrideFeedbackSchema,
+  DECISION_FEEDBACK_LIMIT,
+  DecisionFeedbackSchema,
+  REVIEW_QUEUE_LIMIT,
+  ReviewQueueSchema,
   TicketViewSchema,
   CategoryChangesSchema,
   CategorySchema,
@@ -315,6 +319,37 @@ const operations: readonly Operation[] = [
       '200': { description: 'The ticket after the change.', schema: TicketViewSchema },
       '400': badRequest,
       '404': notFound,
+      ...authedErrors,
+    },
+  },
+  {
+    method: 'get',
+    path: '/v1/tickets:review-queue',
+    tag: 'Tickets',
+    summary: 'Human review queue',
+    description:
+      `Tickets whose department decision is needs_review or failed, oldest first (tie-break: ticket id), at most ${REVIEW_QUEUE_LIMIT}. ` +
+      'counts cover every unresolved ticket, also beyond the result cap. A department override resolves a ticket; ' +
+      'a category or priority change does not.',
+    auth: true,
+    responses: {
+      '200': { description: 'The queue and its counts.', schema: ReviewQueueSchema },
+      ...authedErrors,
+    },
+  },
+  {
+    method: 'get',
+    path: '/v1/tickets:decision-feedback',
+    tag: 'Tickets',
+    summary: 'Export category and priority feedback',
+    description:
+      'Read only. Decisions whose category or priority an admin reviewed (a confirmation of the model value counts), ' +
+      `newest first, at most ${DECISION_FEEDBACK_LIMIT}. modelCategoryId / modelPriority are the model values before the first ` +
+      'admin review (null is a real model value); categoryId / priority are final. With the current departments, categories, ' +
+      'and taxonomy version. No sender email. Nothing is written back.',
+    auth: true,
+    responses: {
+      '200': { description: 'Feedback rows and the current catalogues.', schema: DecisionFeedbackSchema },
       ...authedErrors,
     },
   },

@@ -13,6 +13,8 @@ import {
   UpdateDepartmentSchema,
   OverrideTicketSchema,
   OverrideFeedbackSchema,
+  DecisionFeedbackSchema,
+  ReviewQueueSchema,
   CategorySchema,
   CreateCategorySchema,
   DeleteCategoryResultSchema,
@@ -107,6 +109,16 @@ export async function classifyTicket(c: Context, agent: AgentLink): Promise<Json
 
 export async function listTickets(agent: AgentLink): Promise<JsonResult> {
   return forward(async () => TicketViewSchema.array().parse(await agent.request('tickets.list', {})));
+}
+
+/** GET /v1/tickets:review-queue: needs_review and failed tickets, oldest first. */
+export async function reviewQueue(agent: AgentLink): Promise<JsonResult> {
+  return forward(async () => ReviewQueueSchema.parse(await agent.request('tickets.reviewQueue', {})));
+}
+
+/** GET /v1/tickets:decision-feedback: read-only category and priority feedback (no email). */
+export async function decisionFeedback(agent: AgentLink): Promise<JsonResult> {
+  return forward(async () => DecisionFeedbackSchema.parse(await agent.request('tickets.decisionFeedback', {})));
 }
 
 /** Read-only override feedback export (no email). */

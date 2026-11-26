@@ -88,6 +88,7 @@ describe('preload', () => {
       'classifyTicket',
       'cancelClassify',
       'listTickets',
+      'reviewQueue',
       'overrideTicket',
       'setTicketCategory',
       'setTicketPriority',

@@ -79,6 +79,11 @@ export const SettingsValuesSchema = z.strictObject({
   model: OllamaModelNameSchema,
   classifyTimeoutMs: ClassifyTimeoutMsSchema,
   minConfidence: MinConfidenceSchema,
+  /**
+   * An optional second Ollama model, tried once when the primary model fails in a
+   * retryable way. Null disables it. Never the same as the primary model.
+   */
+  fallbackModel: OllamaModelNameSchema.nullable(),
 });
 export type SettingsValues = z.infer<typeof SettingsValuesSchema>;
 export type SettingKey = keyof SettingsValues;
@@ -88,6 +93,7 @@ export const SETTING_KEYS = [
   'model',
   'classifyTimeoutMs',
   'minConfidence',
+  'fallbackModel',
 ] as const satisfies readonly SettingKey[];
 
 export const SETTINGS_DEFAULTS: SettingsValues = {
@@ -96,6 +102,7 @@ export const SETTINGS_DEFAULTS: SettingsValues = {
   model: OLLAMA_DEFAULT_MODEL,
   classifyTimeoutMs: CLASSIFY_TIMEOUT_DEFAULT_MS,
   minConfidence: CLASSIFY_MIN_CONFIDENCE_DEFAULT,
+  fallbackModel: null,
 };
 
 /** A save: any subset of the settings, all validated. Unknown keys are refused. */
@@ -105,11 +112,12 @@ export const SettingsPatchSchema = SettingsValuesSchema.partial().refine(
 );
 export type SettingsPatch = z.infer<typeof SettingsPatchSchema>;
 
-/** The three settings an environment variable may override. */
+/** The settings an environment variable may override. An empty variable is no override. */
 export const SETTING_ENV_VARS = {
   ollamaBaseUrl: 'OLLAMA_HOST',
   model: 'OLLAMA_MODEL',
   minConfidence: 'CLASSIFY_MIN_CONFIDENCE',
+  fallbackModel: 'OLLAMA_FALLBACK_MODEL',
 } as const satisfies Partial<Record<SettingKey, string>>;
 export type SettingEnvVar = (typeof SETTING_ENV_VARS)[keyof typeof SETTING_ENV_VARS];
 
@@ -124,7 +132,7 @@ const fieldOf = <T extends z.ZodType>(value: T) =>
     /** The saved value, also when an environment variable overrides it. */
     saved: value.nullable(),
     /** Set when an environment variable may override this setting. */
-    envVar: z.enum(['OLLAMA_HOST', 'OLLAMA_MODEL', 'CLASSIFY_MIN_CONFIDENCE']).nullable(),
+    envVar: z.enum(['OLLAMA_HOST', 'OLLAMA_MODEL', 'CLASSIFY_MIN_CONFIDENCE', 'OLLAMA_FALLBACK_MODEL']).nullable(),
     /** The variable is set but invalid, so it is not applied. Never echoes the value. */
     envError: z.string().max(300).nullable(),
   });
@@ -136,6 +144,7 @@ export const SettingsViewSchema = z.strictObject({
     model: fieldOf(z.string().max(128)),
     classifyTimeoutMs: fieldOf(z.number()),
     minConfidence: fieldOf(z.number()),
+    fallbackModel: fieldOf(z.string().max(128).nullable()),
   }),
   /** Whether the agent holds an Ollama access token. Never the token itself. */
   tokenSet: z.boolean(),

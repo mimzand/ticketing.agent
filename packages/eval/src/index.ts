@@ -39,3 +39,15 @@ export {
   type FewShotCandidates,
   type SkippedOverride,
 } from './feedback.js';
+export {
+  CategoryFewShotCandidateSchema,
+  CategoryFewShotCandidatesSchema,
+  categoryFewShotCandidates,
+  decisionFeedbackSuite,
+  FEEDBACK_CATALOGUE,
+  type CategoryFewShotCandidate,
+  type CategoryFewShotCandidates,
+  type SkippedFeedback,
+} from './decision-feedback.js';
+export { comparisonLines, recordCase, RecordInputSchema, type RecordInput, type RecordResult } from './record.js';
+export { FeedbackOriginSchema, type FeedbackOrigin } from './suite.js';

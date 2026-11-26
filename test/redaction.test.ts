@@ -22,12 +22,17 @@ const API_KEY = 'apikey_' + 'K'.repeat(32);
 const OLLAMA_TOKEN = 'ollamatok_' + 'T'.repeat(32);
 const SENDER_EMAIL = 'private.sender@example.com';
 const MERGED_EMAIL = 'merged.sender@example.org';
+const SUBJECT = 'SENTINEL-SUBJECT invoice';
+const BODY = 'SENTINEL-BODY text of the ticket';
+const RATIONALE = 'SENTINEL-RATIONALE from the model';
+const QUOTE = 'SENTINEL-BODY text';
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 describe('log redaction', () => {
   it('keeps the agent token, the API key, the Ollama token, and sender emails out of the agent output and the desktop log', async () => {
     const ollama = await fakeOllama();
+    ollama.reply = { departmentId: 'billing', confidence: 0.9, rationale: RATIONALE, quote: QUOTE, priority: 'high' };
     const recorder = tsxFork();
     const stateFile = join(dir, 'agent-state.json');
     const logFile = join(dir, 'desktop.log');
@@ -78,8 +83,8 @@ describe('log redaction', () => {
       // Classify from the desktop and through the HTTP API (with the API key).
       await handlers[IpcChannels.classifyTicket]({
         externalId: 'd-1',
-        subject: 'Invoice',
-        body: 'x',
+        subject: SUBJECT,
+        body: BODY,
         channel: 'email',
         email: SENDER_EMAIL,
       });
@@ -105,6 +110,22 @@ describe('log redaction', () => {
       const agentOutput = recorder.output();
       const desktopLog = readFileSync(logFile, 'utf8');
       expect(agentOutput).toMatch(/Client authenticated \(shell\)/);
+      // One structured decision line per stored classify: ids, counts, and codes only.
+      const decisions = agentOutput.split('\n').filter((line) => line.includes('Decision {'));
+      expect(decisions).toHaveLength(2);
+      const event = JSON.parse(decisions[0]?.slice(decisions[0].indexOf('{')) ?? '{}') as Record<string, unknown>;
+      expect(event).toMatchObject({ event: 'ticket_classified', status: 'labeled', departmentId: 'billing', priority: 'high', quoteAccepted: true, attempts: 1, modelRole: 'primary', failureCode: null });
+      for (const [name, value] of [
+        ['subject', SUBJECT],
+        ['body', BODY],
+        ['rationale', RATIONALE],
+        ['quote', QUOTE],
+        ['Ollama URL', ollama.url],
+        ['external id', 'd-1'],
+      ] as const) {
+        expect(decisions.join('\n'), `${name} in decision log`).not.toContain(value);
+        expect(agentOutput, `${name} in agent output`).not.toContain(value);
+      }
       expect(desktopLog).toMatch(/Agent started by the desktop/);
       for (const [name, secret] of [
         ['agent token', agentToken],

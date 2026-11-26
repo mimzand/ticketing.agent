@@ -17,6 +17,8 @@ import {
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { errorMessage } from '../screen.js';
 import {
+  fallbackModelOptions,
+  fallbackModelProblem,
   fieldState,
   SETTINGS_CATEGORIES,
   SETTINGS_CATEGORY_DESCRIPTIONS,
@@ -42,6 +44,7 @@ const draft = reactive<SettingsValues>({
   model: '',
   classifyTimeoutMs: 0,
   minConfidence: 0,
+  fallbackModel: null,
 });
 const errors = reactive<Partial<Record<SettingKey, string>>>({});
 
@@ -51,6 +54,7 @@ const SCHEMAS = {
   model: OllamaModelNameSchema,
   classifyTimeoutMs: ClassifyTimeoutMsSchema,
   minConfidence: MinConfidenceSchema,
+  fallbackModel: OllamaModelNameSchema.nullable(),
 } as const;
 
 const theme = ref<Theme>(readTheme(browserStorage()));
@@ -87,7 +91,9 @@ async function save(keys: readonly SettingKey[]): Promise<void> {
   notice.value = null;
   const editable = keys.filter((key) => !state(key)?.readOnly);
   const valid = editable.map(validate).every(Boolean);
-  if (!valid) {
+  const pairProblem = keys.includes('fallbackModel') ? fallbackModelProblem(draft.model, draft.fallbackModel) : null;
+  if (pairProblem) errors.fallbackModel = pairProblem;
+  if (!valid || pairProblem) {
     notice.value = { tone: 'error', text: 'Fix the highlighted fields. Nothing was saved.' };
     return;
   }
@@ -184,6 +190,10 @@ const modelOptions = computed(() => {
   const names = models.value?.models.map((m) => m.name) ?? [];
   return draft.model && !names.includes(draft.model) ? [draft.model, ...names] : names;
 });
+
+const fallbackOptions = computed(() =>
+  fallbackModelOptions(models.value?.models.map((m) => m.name) ?? [], draft.model, draft.fallbackModel),
+);
 
 async function loadModels(): Promise<void> {
   modelsLoading.value = true;
@@ -362,7 +372,7 @@ onMounted(load);
         </section>
 
         <!-- AI Models -->
-        <form v-if="category === 'models'" class="stack" @submit.prevent="save(['model', 'classifyTimeoutMs'])">
+        <form v-if="category === 'models'" class="stack" @submit.prevent="save(['model', 'fallbackModel', 'classifyTimeoutMs'])">
           <div class="models">
             <div class="actions">
               <h3>Models on {{ models?.server ?? 'the server' }}</h3>
@@ -395,6 +405,27 @@ onMounted(load);
             <small v-if="state('model')?.readOnly">Set by OLLAMA_MODEL.</small>
             <small v-if="errors.model" class="error" role="alert">{{ errors.model }}</small>
             <small v-if="state('model')?.envError" class="error" role="alert">{{ state('model')?.envError }}</small>
+          </label>
+
+          <label class="field">
+            <span>
+              Fallback model
+              <span class="badge" :data-tone="state('fallbackModel')?.readOnly ? 'accent' : undefined">
+                {{ state('fallbackModel')?.sourceLabel }}
+              </span>
+            </span>
+            <input v-if="state('fallbackModel')?.readOnly" :value="draft.fallbackModel ?? 'Disabled'" readonly />
+            <select v-else v-model="draft.fallbackModel" data-testid="fallback-model" @change="validate('fallbackModel')">
+              <option :value="null">Disabled</option>
+              <option v-for="name in fallbackOptions" :key="name" :value="name">{{ name }}</option>
+            </select>
+            <small>
+              Tried once, within the same classify timeout, only when the active model fails in a retryable way
+              (unreachable, HTTP 500/502/503/504, an empty or malformed answer). Never after a timeout or a cancel.
+            </small>
+            <small v-if="state('fallbackModel')?.readOnly">Set by OLLAMA_FALLBACK_MODEL.</small>
+            <small v-if="errors.fallbackModel" class="error" role="alert">{{ errors.fallbackModel }}</small>
+            <small v-if="state('fallbackModel')?.envError" class="error" role="alert">{{ state('fallbackModel')?.envError }}</small>
           </label>
 
           <label class="field narrow">

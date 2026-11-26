@@ -1,5 +1,5 @@
 import { createAgentLink, type AgentLink } from '@ticket/agent-client';
-import { ApiHealthSchema, OverrideFeedbackSchema } from '@ticket/shared';
+import { ApiHealthSchema, DecisionFeedbackSchema, OverrideFeedbackSchema, ReviewQueueSchema } from '@ticket/shared';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -313,5 +313,47 @@ describe('category and priority routes', () => {
     expect(refused.status).toBe(409);
     expect((await call('/v1/categories/how-to', { method: 'DELETE' })).status).toBe(200);
     expect((await call('/v1/categories/how-to', { method: 'DELETE' })).status).toBe(404);
+  }, 60_000);
+});
+
+describe('review queue and decision feedback routes', () => {
+  beforeAll(startAgent, 30_000);
+  afterAll(stopAgent);
+
+  const app = () => createApiApp({ agent: link, apiKey: API_KEY, log: () => undefined });
+  const get = (path: string) => app().request(path, { headers: { 'x-api-key': API_KEY } });
+  const post = (path: string, body: unknown) =>
+    app().request(path, {
+      method: 'POST',
+      headers: { 'x-api-key': API_KEY, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  it('lists failed tickets in the queue, removes one after an override, and exports reviewed priorities without email', async () => {
+    expect((await app().request('/v1/tickets:review-queue')).status).toBe(401);
+    expect((await app().request('/v1/tickets:decision-feedback')).status).toBe(401);
+    await post('/v1/departments', { id: 'billing', name: 'Billing', description: '' });
+    // No model is reachable here, so both decisions are failed.
+    const a = (await (await post('/v1/tickets:classify', { externalId: 'rq-a', subject: 'A', body: 'x', channel: 'web', email: 'rq.sender@example.com' })).json()) as { id: string };
+    const b = (await (await post('/v1/tickets:classify', { externalId: 'rq-b', subject: 'B', body: 'x', channel: 'web' })).json()) as { id: string };
+
+    const queue = ReviewQueueSchema.parse(await (await get('/v1/tickets:review-queue')).json());
+    expect(queue.counts.failed).toBeGreaterThanOrEqual(2);
+    const ids = queue.tickets.map((t) => t.id);
+    expect(ids.indexOf(a.id)).toBeLessThan(ids.indexOf(b.id));
+
+    expect((await post(`/v1/tickets/${a.id}/priority`, { priority: 'high' })).status).toBe(200);
+    expect(ReviewQueueSchema.parse(await (await get('/v1/tickets:review-queue')).json()).tickets.map((t) => t.id)).toContain(a.id);
+    expect((await post(`/v1/tickets/${a.id}/override`, { departmentId: 'billing' })).status).toBe(200);
+    const after = ReviewQueueSchema.parse(await (await get('/v1/tickets:review-queue')).json());
+    expect(after.tickets.map((t) => t.id)).not.toContain(a.id);
+    expect(after.counts.failed).toBe(queue.counts.failed - 1);
+
+    const response = await get('/v1/tickets:decision-feedback');
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    const feedback = DecisionFeedbackSchema.parse(JSON.parse(text));
+    expect(feedback.items.find((i) => i.ticketId === a.id)).toMatchObject({ priorityReviewed: true, modelPriority: null, priority: 'high', categoryReviewed: false });
+    expect(text).not.toContain('rq.sender@example.com');
   }, 60_000);
 });

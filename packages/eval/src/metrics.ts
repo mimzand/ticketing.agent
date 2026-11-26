@@ -18,7 +18,7 @@ export interface EvalReport {
   readonly total: number;
   readonly passed: number;
   readonly failed: number;
-  readonly bySource: Readonly<Record<'golden' | 'override', { readonly total: number; readonly passed: number }>>;
+  readonly bySource: Readonly<Record<'golden' | 'override' | 'feedback', { readonly total: number; readonly passed: number }>>;
   /** Cases whose applied department (or none) equals the expected one. */
   readonly labelMatches: number;
   /** labelMatches / cases that produced an outcome; null when none did. */
@@ -78,7 +78,7 @@ export function buildReport(runs: readonly SuiteRun[]): EvalReport {
 
   const mismatches = (status: string) =>
     scored.filter(({ expected, actual }) => (expected.status === status) !== (actual.status === status)).length;
-  const source = (name: 'golden' | 'override') => {
+  const source = (name: 'golden' | 'override' | 'feedback') => {
     const of = results.filter((r) => r.source === name);
     return { total: of.length, passed: of.filter((r) => r.passed).length };
   };
@@ -93,7 +93,7 @@ export function buildReport(runs: readonly SuiteRun[]): EvalReport {
     total: results.length,
     passed,
     failed: results.length - passed,
-    bySource: { golden: source('golden'), override: source('override') },
+    bySource: { golden: source('golden'), override: source('override'), feedback: source('feedback') },
     labelMatches,
     accuracy: ratio(labelMatches, scored.length),
     departments,
@@ -115,7 +115,8 @@ const percent = (value: number | null) => (value === null ? '—' : `${(value * 
  */
 export function formatReport(report: EvalReport): string {
   const lines = [
-    `Golden eval: ${report.total} cases (${report.bySource.golden.total} golden, ${report.bySource.override.total} override): ` +
+    `Golden eval: ${report.total} cases (${report.bySource.golden.total} golden, ${report.bySource.override.total} override` +
+      `${report.bySource.feedback.total > 0 ? `, ${report.bySource.feedback.total} feedback` : ''}): ` +
       `${report.passed} passed, ${report.failed} failed`,
     `Accuracy: ${percent(report.accuracy)} (${report.labelMatches}/${report.total - report.errors} applied labels match)`,
     `Mismatches: needs_review ${report.needsReviewMismatches} · failed ${report.failedMismatches} · run errors ${report.errors}`,

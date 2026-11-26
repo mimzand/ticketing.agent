@@ -44,7 +44,15 @@ export async function runAgent(options: RunAgentOptions): Promise<RunningAgent> 
   const db = openTicketDatabase(databasePath);
   // Settings (saved in SQLite, overridable by OLLAMA_HOST, OLLAMA_MODEL,
   // CLASSIFY_MIN_CONFIDENCE) are resolved by the host on every call.
-  const host = createAgentHost({ db, env, databasePath });
+  // One compact, secret-free JSON line per stored classify outcome (ids, counts,
+  // codes; never ticket text, email, rationale, quote, model output, token, or URL).
+  const log = options.log;
+  const host = createAgentHost({
+    db,
+    env,
+    databasePath,
+    ...(log && { onDecisionEvent: (event) => log(`Decision ${JSON.stringify(event)}`) }),
+  });
   const token = generateToken();
   let server: AgentServer | undefined;
   try {
