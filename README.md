@@ -30,12 +30,25 @@ Electron binary. `.yarnrc.yml` sets `nodeLinker: node-modules` and keeps lifecyc
 | `yarn api:dev` | Starts the HTTP API on `http://127.0.0.1:8787` |
 | `yarn api:up` | Starts the agent and the API together |
 | `yarn dev` | Builds the agent bundle and starts the desktop app. The app starts the agent itself, or attaches to one that is already running |
+| `yarn adk:web` | ADK dev panel at `http://127.0.0.1:8000` for the ticket classifier (Ollama). Development only |
 | `yarn typecheck` | TypeScript (strict) in every workspace |
 | `yarn test` | Vitest across all workspaces |
 | `yarn lint` | ESLint, including the package boundary rules |
 | `yarn eval` | Golden eval suite against a fake Ollama; exits non-zero on a regression. See [docs/eval.md](docs/eval.md) |
 | `yarn workspace @ticket/eval run decision-feedback <export.json>` | Category/priority feedback export → eval cases and category few-shot candidates (files only) |
 | `yarn workspace @ticket/eval run record <input.json> <output.json> --synthetic` | Records one live Ollama answer for a synthetic ticket into a draft suite file |
+
+The ADK dev panel is a local chat UI for the same classifier. It reads the ticket
+database once at startup (active departments, active categories, and the saved Ollama
+settings; `OLLAMA_HOST`, `OLLAMA_MODEL`, and `OLLAMA_TOKEN` still override), then closes
+the database. Sessions stay in memory. Paste a ticket as the message. `ADK_WEB_PORT`
+changes the port (default `8000`). A token saved only in the desktop app is not available
+here; set `OLLAMA_TOKEN` when the server requires one.
+
+```sh
+yarn adk:web
+# http://127.0.0.1:8000
+```
 
 The desktop alone is one command; it starts its own agent:
 

@@ -1,5 +1,6 @@
+import { type OllamaClient } from '@ticket/model-provider';
 import { describe, expect, it } from 'vitest';
-import { buildClassifierInstruction, senderHistoryBlock } from './classify.js';
+import { buildClassifierInstruction, createClassifierAgent, senderHistoryBlock } from './classify.js';
 
 describe('buildClassifierInstruction', () => {
   const departments = [
@@ -81,6 +82,24 @@ describe('buildClassifierInstruction', () => {
     expect(text).toContain('Admin priority record');
     expect(text).toContain('- outage: 5 reviewed; admin result urgent 4/5. Of those 4, the model had said high on 3.');
     expect(text).not.toContain('retired');
+  });
+});
+
+describe('createClassifierAgent', () => {
+  it('builds the Ollama classifier and does not call the model', async () => {
+    const ollama = {
+      config: {
+        baseUrl: 'http://127.0.0.1:11434',
+        model: 'qwen3:8b',
+        token: undefined,
+        timeoutMs: 5_000,
+      },
+      checkReachable: () => Promise.resolve(false),
+      listModels: () => Promise.resolve([]),
+      generate: () => Promise.reject(new Error('the panel test must not call the model')),
+    } satisfies OllamaClient;
+    const agent = await createClassifierAgent({ ollama, departments: [] });
+    expect(agent.name).toBe('classifier');
   });
 });
 

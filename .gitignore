@@ -19,6 +19,7 @@ coverage/
 
 **/.data/
 **/.agent-data/
+**/.adk/
 *.db
 *.db-journal
 *.db-wal

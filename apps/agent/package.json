@@ -12,16 +12,22 @@
   },
   "scripts": {
     "dev": "tsx src/main.ts",
+    "adk:web": "tsx src/adk-web.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
   "dependencies": {
+    "@ticket/adk-runtime": "workspace:*",
     "@ticket/agent-host": "workspace:*",
     "@ticket/agent-protocol": "workspace:*",
+    "@ticket/model-provider": "workspace:*",
     "@ticket/shared": "workspace:*",
-    "@ticket/storage": "workspace:*"
+    "@ticket/storage": "workspace:*",
+    "zod": "4.6.7"
   },
   "devDependencies": {
+    "@google/adk-devtools": "2.4.0",
+    "esbuild": "0.28.1",
     "tsx": "4.23.15"
   }
 }

@@ -5,6 +5,7 @@ export {
   senderHistoryBlock,
   ClassifyCancelledError,
   classifyTicketText,
+  createClassifierAgent,
   type CategoryContext,
   type ClassifyTextInput,
   type ModelReply,

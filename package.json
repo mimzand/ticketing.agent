@@ -17,6 +17,7 @@
     "api:dev": "yarn workspace @ticket/api run dev",
     "api:up": "yarn workspaces foreach --all --parallel --jobs unlimited --interlaced --verbose --include @ticket/agent --include @ticket/api run dev",
     "dev": "yarn workspace @ticket/desktop run dev",
+    "adk:web": "yarn workspace @ticket/agent run adk:web",
     "typecheck": "tsc -p tsconfig.json && yarn workspaces foreach --all --exclude redrock-ticketing-agent --verbose run typecheck",
     "test": "vitest run",
     "lint": "eslint . --max-warnings=0",
